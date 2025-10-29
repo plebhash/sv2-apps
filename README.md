@@ -22,6 +22,7 @@ If you're looking for the low-level protocol libraries, check out the [`stratum`
 
 ## Contents
 
+- `bitcoin-core-sv2/` - Library crate that translates Bitcoin Core IPC into Sv2 Template Distribution Protocol
 - `pool-apps/` - Pool operator applications
   - `pool/` - SV2-compatible mining pool server that communicates with downstream roles and Template Providers
   - `jd-server/` - Job Declarator Server coordinates job declaration between miners and pools, maintains synchronized mempool
