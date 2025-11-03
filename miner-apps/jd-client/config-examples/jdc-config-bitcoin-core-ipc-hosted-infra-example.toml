@@ -1,5 +1,5 @@
 # SRI JDC config
-listening_address = "0.0.0.0:34265"
+listening_address = "127.0.0.1:34265"
 
 # Version support
 max_supported_version = 2
@@ -25,13 +25,6 @@ share_batch_size = 10
 # "COINBASEONLY" - coinbase-only mining
 mode = "FULLTEMPLATE"
 
-# Template Provider config
-# Local TP (this is pointing to localhost so you must run a TP locally for this configuration to work)
-# tp_address = "127.0.0.1:8442"
-# Hosted testnet TP 
-tp_address = "75.119.150.111:8442"
-tp_authority_public_key = "9bwHCYnjhbHm4AS3pWg9MtAH83mzWohoJJJDELYBqZhDNqszDLc"
-
 # string to be added into the Coinbase scriptSig
 jdc_signature = "Sv2MinerSignature"
 
@@ -42,7 +35,7 @@ jdc_signature = "Sv2MinerSignature"
 #     https://github.com/bitcoin/bips/blob/master/bip-0380.mediawiki#appendix-b-index-of-script-expressions
 # Although the `musig` descriptor is not yet supported and the legacy `combo` descriptor never
 # will be. If you have an address, embed it in a descriptor like `addr(<address here>)`.
-coinbase_reward_script = "addr(tb1qa0sm0hxzj0x25rh8gw5xlzwlsfvvyz8u96w3p8)"
+coinbase_reward_script = "addr(tb1qr8xjkrx46yfsch7q2ts2g007haufq48n9pe6qc)"
 
 # Enable this option to set a predefined log file path.
 # When enabled, logs will always be written to this file.
@@ -78,3 +71,9 @@ jds_port = "34264"
 # pool_port = "34254"
 # jds_address = "127.0.0.1:34264"
 # jds_port = "34264"
+
+# Bitcoin Core IPC config
+[template_provider_type.BitcoinCoreIpc]
+unix_socket_path = "/path/to/node.sock"
+fee_threshold = 100
+min_interval = 5

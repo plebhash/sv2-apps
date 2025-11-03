@@ -43,6 +43,9 @@ Note: while JDC can cater for multiple downstream clients, with either one or mu
 |                                                                                                     |  |                              |
 +----------------------------------------------------------------------------------------------------+   +------------------------------+
 
+It can receive templates from two potential sources:
+- Sv2 Template Provider: a separate Sv2 application running either locally or on a different machine, for which a (optionally encrypted) TCP connection will be established
+- Bitcoin Core v30+: an officially released Bitcoin Core node running locally, on the same machine, for which a UNIX socket connection will be established
 
 ```
 ## Setup
@@ -54,92 +57,33 @@ The configuration file contains the following information:
 1. The downstream socket information, which includes the listening IP address (`downstream_address`) and port (`downstream_port`).
 2. The maximum and minimum protocol versions (`max_supported_version` and `min_supported_version`) with size as (`min_extranonce2_size`)
 3. The authentication keys used for the downstream connections (`authority_public_key`, `authority_secret_key`)
-4. The Template Provider address (`tp_address`).
+4. The `template_provider_type` section, which determines how the pool obtains block templates. There are two options:
+   - `[template_provider_type.Sv2Tp]` - Connects to an SV2 Template Provider, with the following parameters:
+     - `address` - The Template Provider's network address
+     - `public_key` - (Optional) The TP's authority public key for connection verification
+   - `[template_provider_type.BitcoinCoreIpc]` - Connects directly to Bitcoin Core via IPC, with the following parameters:
+     - `unix_socket_path` - Path to the Bitcoin Core IPC UNIX socket
+     - `fee_threshold` - Minimum fee threshold to trigger new templates
 
-## Configuration
+For connections with a Sv2 Template Provider, you may want to verify that your TP connection is authentic. You can get the `public_key` from the logs of your TP, for example:
 
-The JDC is configured via a `.toml` file.
-See [`config-examples/jdc-config-local-example.toml`](./config-examples/jdc-config-local-example.toml) for a full example.
-
-### Example Configuration
-
-```toml
-# Listening address for downstream clients
-listening_address = "127.0.0.1:34265"
-
-# Version support
-max_supported_version = 2
-min_supported_version = 2
-
-# Authentication keys for encrypted downstream connections
-authority_public_key  = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
-authority_secret_key  = "mkDLTBBRxdBv998612qipDYoTK3YUrqLe8uWw7gu3iXbSrn2n"
-cert_validity_sec     = 3600
-
-user_identity = "your_username_here"
-
-# Target shares per minute & batching
-shares_per_minute   = 1.0
-share_batch_size    = 1
-min_extranonce_size = 4
-
-# Template Provider
-tp_address = "127.0.0.1:8442"
-jdc_signature = "Sv2MinerSignature"
-
-# Coinbase output for solo mining fallback
-coinbase_reward_script = "addr(tb1qa0sm0hxzj0x25rh8gw5xlzwlsfvvyz8u96w3p8)"
-
-[[upstreams]]
-authority_pubkey = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
-pool_address     = "127.0.0.1"
-pool_port        = 34254
-jd_address       = "127.0.0.1"
-jd_port          = 34264
+```
+# 2024-02-13T14:59:24Z Template Provider authority key: EguTM8URcZDQVeEBsM4B5vg9weqEUnufA8pm85fG4bZd
 ```
 
-For a complete, annotated config, see the [full example](./config-examples/jdc-config-hosted-example.toml).
+### Run
 
+There are four example configuration files found in `pool-apps/jd-client/config-examples`/:
 
-## Usage
+1. `jdc-config-hosted-infra-example.toml` - Connects to a community hosted infra (Pool + JDS + Sv2 TP)
+2. `jdc-config-local-infra-example.toml` - Connects to a local infra (Pool + JDS + Sv2 TP)
+3. `jdc-config-bitcoin-core-ipc-hosted-infra-example.toml` - Connects to a local Bitcoin Core via IPC, and a community hosted infra (Pool + JDS)
+4. `jdc-config-bitcoin-core-ipc-local-infra-example.toml` - Connects to a local Bitcoin Core via IPC, and a local infra (Pool + JDS)
 
-### Installation & Build
-
+Run JDC (example using hosted infra):
 ```bash
-# Clone the repository
-git clone https://github.com/stratum-mining/stratum.git
-cd stratum
-
-# Build JDC
-cargo build --release -p jd_client
-```
-
-### Running JDC
-
-#### With Local Pool and Job Declarator Server
-
-```bash
-cd roles/jd_client
-cargo run -- -c config-examples/jdc-config-local-example.toml
-```
-
-#### With Hosted Pool and Job Declarator Server
-
-```bash
-cd roles/jd_client
-cargo run -- -c config-examples/jdc-config-hosted-example.toml
-```
-
-### Command Line Options
-
-```bash
-# Use specific config file
-jd_client -c /path/to/config.toml
-jd_client --config /path/to/config.toml
-
-# Show help
-jd_client -h
-jd_client --help
+cd miner-apps/jd-client
+cargo run -- -c config-examples/jdc-config-bitcoin-core-ipc-hosted-infra-example.toml
 ```
 
 ## Architecture Details
