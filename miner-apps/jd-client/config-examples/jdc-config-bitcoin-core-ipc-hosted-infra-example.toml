@@ -14,10 +14,10 @@ cert_validity_sec = 3600
 # User identity/username for pool connection
 user_identity = "your_username_here"
 
-# target number of shares per minute applied to every downstream channel
+# How many shares we expect to receive in a minute (determines difficulty targets)
 shares_per_minute = 6.0
 
-# Share batch size
+# How many shares do we want to acknowledge in a batch
 share_batch_size = 10
 
 # JDC supports two modes:
