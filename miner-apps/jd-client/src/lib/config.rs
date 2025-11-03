@@ -8,6 +8,7 @@ use stratum_apps::{
     config_helpers::CoinbaseRewardScript,
     key_utils::{Secp256k1PublicKey, Secp256k1SecretKey},
     stratum_core::bitcoin::{Amount, TxOut},
+    tp_type::TemplateProviderType,
     utils::types::{SharesBatchSize, SharesPerMinute},
 };
 
@@ -26,10 +27,8 @@ pub struct JobDeclaratorClientConfig {
     authority_secret_key: Secp256k1SecretKey,
     /// The validity period (in seconds) for the certificate used in noise.
     cert_validity_sec: u64,
-    /// The address of the TP that this JDC will connect to.
-    tp_address: String,
-    /// The expected public key of the TP's authority for authentication (optional).
-    tp_authority_public_key: Option<Secp256k1PublicKey>,
+    /// The template provider type that this JDC will use.
+    template_provider_type: TemplateProviderType,
     /// A list of upstream Job Declarator Servers (JDS) that this JDC can connect to.
     /// JDC can fallover between these upstreams.
     upstreams: Vec<Upstream>,
@@ -63,7 +62,8 @@ impl JobDeclaratorClientConfig {
         shares_per_minute: SharesPerMinute,
         share_batch_size: SharesBatchSize,
         pool_config: PoolConfig,
-        tp_config: TPConfig,
+        cert_validity_sec: u64,
+        template_provider_type: TemplateProviderType,
         upstreams: Vec<Upstream>,
         jdc_signature: String,
         jdc_mode: Option<String>,
@@ -76,9 +76,8 @@ impl JobDeclaratorClientConfig {
             min_supported_version: protocol_config.min_supported_version,
             authority_public_key: pool_config.authority_public_key,
             authority_secret_key: pool_config.authority_secret_key,
-            cert_validity_sec: tp_config.cert_validity_sec,
-            tp_address: tp_config.tp_address,
-            tp_authority_public_key: tp_config.tp_authority_public_key,
+            cert_validity_sec,
+            template_provider_type,
             upstreams,
             coinbase_reward_script: protocol_config.coinbase_reward_script,
             jdc_signature,
@@ -121,14 +120,9 @@ impl JobDeclaratorClientConfig {
         self.cert_validity_sec
     }
 
-    /// Returns Template Provider address.
-    pub fn tp_address(&self) -> &str {
-        &self.tp_address
-    }
-
-    /// Returns Template Provider authority public key.
-    pub fn tp_authority_public_key(&self) -> Option<&Secp256k1PublicKey> {
-        self.tp_authority_public_key.as_ref()
+    /// Returns the template provider type.
+    pub fn template_provider_type(&self) -> &TemplateProviderType {
+        &self.template_provider_type
     }
 
     /// Returns the minimum supported version.
@@ -226,31 +220,6 @@ impl PoolConfig {
         Self {
             authority_public_key,
             authority_secret_key,
-        }
-    }
-}
-
-/// Represent template provider config for JDC to connect.
-pub struct TPConfig {
-    // The validity period (in seconds) expected for the Template Provider's certificate.
-    cert_validity_sec: u64,
-    // The network address of the Template Provider.
-    tp_address: String,
-    // The expected public key of the Template Provider's authority (optional).
-    tp_authority_public_key: Option<Secp256k1PublicKey>,
-}
-
-impl TPConfig {
-    // Creates a new instance of [`TPConfig`].
-    pub fn new(
-        cert_validity_sec: u64,
-        tp_address: String,
-        tp_authority_public_key: Option<Secp256k1PublicKey>,
-    ) -> Self {
-        Self {
-            cert_validity_sec,
-            tp_address,
-            tp_authority_public_key,
         }
     }
 }

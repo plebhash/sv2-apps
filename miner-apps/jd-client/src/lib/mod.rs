@@ -1,14 +1,16 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, thread::JoinHandle, time::Duration};
 
 use async_channel::{unbounded, Receiver, Sender};
+use bitcoin_core_sv2::CancellationToken;
 use stratum_apps::{
     key_utils::Secp256k1PublicKey,
     stratum_core::{bitcoin::consensus::Encodable, parsers_sv2::JobDeclaration},
     task_manager::TaskManager,
+    tp_type::TemplateProviderType,
     utils::types::Sv2Frame,
 };
 use tokio::sync::{broadcast, mpsc};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     channel_manager::ChannelManager,
@@ -17,7 +19,10 @@ use crate::{
     jd_mode::{set_jd_mode, JdMode},
     job_declarator::JobDeclarator,
     status::{State, Status},
-    template_receiver::TemplateReceiver,
+    template_receiver::{
+        bitcoin_core::{connect_to_bitcoin_core, BitcoinCoreSv2Config},
+        sv2_tp::Sv2Tp,
+    },
     upstream::Upstream,
     utils::{ShutdownMessage, UpstreamState},
 };
@@ -108,38 +113,70 @@ impl JobDeclaratorClient {
         .unwrap();
 
         let channel_manager_clone = channel_manager.clone();
+        let mut bitcoin_core_sv2_join_handle: Option<JoinHandle<()>> = None;
 
-        // Initialize the template Receiver
-        let tp_address = self.config.tp_address().to_string();
-        let tp_pubkey = self.config.tp_authority_public_key().copied();
+        match self.config.template_provider_type().clone() {
+            TemplateProviderType::Sv2Tp {
+                address,
+                public_key,
+            } => {
+                let template_receiver = Sv2Tp::new(
+                    address.clone(),
+                    public_key,
+                    channel_manager_to_tp_receiver,
+                    tp_to_channel_manager_sender,
+                    notify_shutdown.clone(),
+                    task_manager.clone(),
+                    status_sender.clone(),
+                )
+                .await
+                .unwrap();
 
-        let template_receiver = TemplateReceiver::new(
-            tp_address.clone(),
-            tp_pubkey,
-            channel_manager_to_tp_receiver,
-            tp_to_channel_manager_sender,
-            notify_shutdown.clone(),
-            task_manager.clone(),
-            status_sender.clone(),
-        )
-        .await
-        .unwrap();
+                let notify_shutdown_cl = notify_shutdown.clone();
+                let status_sender_cl = status_sender.clone();
+                let task_manager_cl = task_manager.clone();
 
-        info!("Template provider setup done");
+                template_receiver
+                    .start(
+                        address,
+                        notify_shutdown_cl,
+                        status_sender_cl,
+                        task_manager_cl,
+                        encoded_outputs.clone(),
+                    )
+                    .await;
 
-        let notify_shutdown_cl = notify_shutdown.clone();
-        let status_sender_cl = status_sender.clone();
-        let task_manager_cl = task_manager.clone();
+                info!("Sv2 Template Provider setup done");
+            }
+            TemplateProviderType::BitcoinCoreIpc {
+                unix_socket_path,
+                fee_threshold,
+                min_interval,
+            } => {
+                // incoming and outgoing TDP channels from the perspective of BitcoinCoreSv2
+                let incoming_tdp_receiver = channel_manager_to_tp_receiver.clone();
+                let outgoing_tdp_sender = tp_to_channel_manager_sender.clone();
 
-        template_receiver
-            .start(
-                tp_address,
-                notify_shutdown_cl,
-                status_sender_cl,
-                task_manager_cl,
-                encoded_outputs.clone(),
-            )
-            .await;
+                let bitcoin_core_config = BitcoinCoreSv2Config {
+                    unix_socket_path: unix_socket_path.clone(),
+                    fee_threshold,
+                    min_interval,
+                    incoming_tdp_receiver,
+                    outgoing_tdp_sender,
+                    cancellation_token: CancellationToken::new(),
+                };
+
+                bitcoin_core_sv2_join_handle = Some(
+                    connect_to_bitcoin_core(
+                        bitcoin_core_config,
+                        notify_shutdown.clone(),
+                        task_manager.clone(),
+                        status_sender.clone(),
+                    )
+                    .await,
+                );
+            }
+        }
 
         let mut upstream_addresses: Vec<_> = self
             .config
@@ -340,6 +377,14 @@ impl JobDeclaratorClient {
                         }
                     }
                 }
+            }
+        }
+
+        if let Some(bitcoin_core_sv2_join_handle) = bitcoin_core_sv2_join_handle {
+            info!("Waiting for BitcoinCoreSv2 dedicated thread to shutdown...");
+            match bitcoin_core_sv2_join_handle.join() {
+                Ok(_) => info!("BitcoinCoreSv2 dedicated thread shutdown complete."),
+                Err(e) => error!("BitcoinCoreSv2 dedicated thread error: {e:?}"),
             }
         }
 

@@ -7,9 +7,9 @@ use stratum_apps::stratum_core::{
 };
 use tracing::{info, warn};
 
-use crate::{error::JDCError, template_receiver::TemplateReceiver};
+use crate::{error::JDCError, template_receiver::sv2_tp::Sv2Tp};
 
-impl HandleCommonMessagesFromServerAsync for TemplateReceiver {
+impl HandleCommonMessagesFromServerAsync for Sv2Tp {
     type Error = JDCError;
 
     fn get_negotiated_extensions_with_server(
