@@ -20,6 +20,15 @@ tarpaulin() {
   fi
 }
 
+echo "Running coverage analysis for bitcoin_core_sv2 crate..."
+echo "================================================="
+
+# bitcoin_core_sv2 Coverage
+cd bitcoin-core-sv2 || exit 1
+tarpaulin "bitcoin-core-sv2"
+cd - > /dev/null || exit 1
+echo ""
+
 echo "Running coverage analysis for SV2 Applications..."
 echo "================================================="
 

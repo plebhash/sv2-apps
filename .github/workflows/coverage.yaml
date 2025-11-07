@@ -57,6 +57,15 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
         continue-on-error: true
 
+      - name: Upload bitcoin-core-sv2 coverage to codecov.io
+        uses: codecov/codecov-action@v4
+        with:
+          directory: ./bitcoin-core-sv2/target/tarpaulin-reports/bitcoin-core-sv2-coverage
+          file: ./bitcoin-core-sv2/target/tarpaulin-reports/bitcoin-core-sv2-coverage/cobertura.xml
+          flags: bitcoin_core_sv2
+          token: ${{ secrets.CODECOV_TOKEN }}
+        continue-on-error: true
+
       - name: Archive coverage reports
         uses: actions/upload-artifact@v4
         with:

@@ -60,6 +60,9 @@ jobs:
       - name: Test miner applications workspace
         run: cargo test --manifest-path=miner-apps/Cargo.toml
 
+      - name: Test bitcoin-core-sv2 crate
+        run: cargo test --manifest-path=bitcoin-core-sv2/Cargo.toml
+
       # We have a separate workflow to run integration tests (see integration-tests.yaml)
 
   clippy:
@@ -68,6 +71,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install capnp dependencies
+        run: sudo apt-get install -y capnproto libcapnp-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.85
@@ -80,6 +86,7 @@ jobs:
           cargo clippy --manifest-path=pool-apps/Cargo.toml -- -D warnings
           cargo clippy --manifest-path=miner-apps/Cargo.toml -- -D warnings
           cargo clippy --manifest-path=integration-tests/Cargo.toml -- -D warnings
+          cargo clippy --manifest-path=bitcoin-core-sv2/Cargo.toml -- -D warnings
 
   fmt:
     name: Format Check
@@ -87,6 +94,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install capnp dependencies
+        run: sudo apt-get install -y capnproto libcapnp-dev
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
@@ -99,3 +109,4 @@ jobs:
           cargo fmt --all --manifest-path=pool-apps/Cargo.toml -- --check
           cargo fmt --all --manifest-path=miner-apps/Cargo.toml -- --check
           cargo fmt --all --manifest-path=integration-tests/Cargo.toml -- --check 
+          cargo fmt --all --manifest-path=bitcoin-core-sv2/Cargo.toml -- --check

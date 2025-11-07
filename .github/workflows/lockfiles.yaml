@@ -21,9 +21,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-
       - name: Build with locked dependencies
         run: |
           cargo build --manifest-path=pool-apps/Cargo.toml --locked
           cargo build --manifest-path=miner-apps/Cargo.toml --locked
           cargo build --manifest-path=integration-tests/Cargo.toml --locked
+
+          # while bitcoin-core-sv2 crate is still a lib crate, no need to lock it so we skip it here
+          # whenever we implement a binary executable for bitcoin-core-sv2, we will need to cover it here
