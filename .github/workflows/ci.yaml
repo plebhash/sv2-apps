@@ -22,6 +22,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install capnp dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get install -y capnproto libcapnp-dev
+
+      - name: Install capnp dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install capnp
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:

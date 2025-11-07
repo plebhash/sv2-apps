@@ -48,6 +48,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Install capnp dependencies (Ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get install -y capnproto libcapnp-dev
+
+      - name: Install capnp dependencies (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: brew install capnp
+
       - name: Install musl tools
         if: startsWith(matrix.os, 'ubuntu')
         run: |

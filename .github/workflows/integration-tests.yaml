@@ -27,6 +27,14 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.85
 
+      - name: Install capnp dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get install -y capnproto libcapnp-dev
+
+      - name: Install capnp dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install capnp
+
       - name: Install cargo-nextest
         run: cargo install cargo-nextest --version 0.9.100 --locked
 
