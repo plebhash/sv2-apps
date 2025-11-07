@@ -19,7 +19,7 @@ jobs:
 
       - name: Generate code coverage
         run: |
-          ./scripts/coverage-apps.sh
+          ./scripts/coverage.sh
 
       - name: List generated coverage files
         run: |
