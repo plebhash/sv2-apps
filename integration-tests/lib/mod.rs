@@ -13,6 +13,7 @@ use std::{
 use stratum_apps::{
     config_helpers::CoinbaseRewardScript,
     key_utils::{Secp256k1PublicKey, Secp256k1SecretKey},
+    tp_type::TemplateProviderType,
 };
 use tracing::Level;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -98,7 +99,10 @@ pub async fn start_pool(
         cert_validity_sec,
         pool_signature,
     );
-    let template_provider_config = pool_sv2::config::TemplateProviderConfig::new(tp_address, None);
+    let template_provider_config = TemplateProviderType::Sv2Tp {
+        address: tp_address,
+        public_key: None,
+    };
     let authority_config =
         pool_sv2::config::AuthorityConfig::new(authority_public_key, authority_secret_key);
     let share_batch_size = 1;
@@ -139,9 +143,7 @@ pub fn start_jdc(
     supported_extensions: Vec<u16>,
     required_extensions: Vec<u16>,
 ) -> (JobDeclaratorClient, SocketAddr) {
-    use jd_client_sv2::config::{
-        JobDeclaratorClientConfig, PoolConfig, ProtocolConfig, TPConfig, Upstream,
-    };
+    use jd_client_sv2::config::{JobDeclaratorClientConfig, PoolConfig, ProtocolConfig, Upstream};
     let jdc_address = get_available_address();
     let max_supported_version = 2;
     let min_supported_version = 2;
@@ -174,7 +176,10 @@ pub fn start_jdc(
         })
         .collect();
     let pool_config = PoolConfig::new(authority_public_key, authority_secret_key);
-    let tp_config = TPConfig::new(1000, tp_address.to_string(), None);
+    let tp_config = TemplateProviderType::Sv2Tp {
+        address: tp_address.to_string(),
+        public_key: None,
+    };
     let protocol_config = ProtocolConfig::new(
         max_supported_version,
         min_supported_version,
@@ -191,6 +196,7 @@ pub fn start_jdc(
         shares_per_minute,
         shares_batch_size,
         pool_config,
+        3600,
         tp_config,
         upstreams,
         jdc_signature,
