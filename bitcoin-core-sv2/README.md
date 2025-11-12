@@ -8,6 +8,20 @@ A Rust library that integrates [Bitcoin Core](https://bitcoin.org/en/bitcoin-cor
 - building Sv2 applications that act as a Client under the Template Distribution Protocol (e.g.: Pool or JDC) while connecting directly to the Bitcoin Core node.
 - building a Sv2 Template Provider application that acts as a Template Distribution Protocol Server while creating templates from a Bitcoin Core node.
 
+## Requirements
+
+In order to build this, crate you need `capnproto` on your system.
+
+For example, on Ubuntu/Debian:
+```
+apt-get install capnproto libcapnp-dev
+```
+
+Or macOS:
+```
+brew install capnproto
+```
+
 ## Important Notes
 
 ### `LocalSet` Requirement
