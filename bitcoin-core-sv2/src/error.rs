@@ -23,6 +23,7 @@ pub enum BitcoinCoreSv2Error {
     FailedToSubmitSolution,
     FailedToSetThread,
     FailedToGetWaitNextRequestOptions,
+    FailedToInterruptWaitNextRequest,
 }
 
 impl From<capnp::Error> for BitcoinCoreSv2Error {
