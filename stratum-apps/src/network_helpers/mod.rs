@@ -15,6 +15,8 @@ pub mod noise_stream;
 pub mod sv1_connection;
 
 use async_channel::{RecvError, SendError};
+
+#[cfg(feature = "core")]
 use stratum_core::codec_sv2::Error as CodecError;
 
 /// Networking errors that can occur in SV2 connections
@@ -23,6 +25,7 @@ pub enum Error {
     /// Invalid handshake message received from remote peer
     HandshakeRemoteInvalidMessage,
     /// Error from the codec layer
+    #[cfg(feature = "core")]
     CodecError(CodecError),
     /// Error receiving from async channel
     RecvError,
@@ -32,6 +35,7 @@ pub enum Error {
     SocketClosed,
 }
 
+#[cfg(feature = "core")]
 impl From<CodecError> for Error {
     fn from(e: CodecError) -> Self {
         Error::CodecError(e)

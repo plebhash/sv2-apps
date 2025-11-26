@@ -17,7 +17,7 @@ name = "jd_server"
 path = "src/lib/mod.rs"
 
 [dependencies]
-stratum-apps = { path = "../../stratum-apps", features = ["jd_server"] }
+stratum-apps = { path = "../../stratum-apps", features = ["jd_server", "std"], default-features = false}
 roles_logic_sv2 = "5.0.0"
 binary_sv2 = "4.0.0"
 error_handling = "1.0.0"

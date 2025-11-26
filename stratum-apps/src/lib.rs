@@ -60,6 +60,8 @@ pub mod rpc;
 pub mod key_utils;
 
 /// Utility methods used in apps.
+/// Requires `core` feature as it uses stratum_core types.
+#[cfg(feature = "core")]
 pub mod utils;
 
 // Task orchestrator used in SRI apps.
