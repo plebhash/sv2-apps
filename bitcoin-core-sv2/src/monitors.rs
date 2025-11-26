@@ -17,6 +17,11 @@ impl BitcoinCoreSv2 {
         let mut self_clone = self.clone();
 
         tokio::task::spawn_local(async move {
+            // if a CoinbaseOutputConstraints message is received, it will cancel this task and
+            // spawn a new one but we don't want the newly spawned one to start until
+            // the current task is finished
+            let monitor_ipc_templates_lock = self_clone.monitor_ipc_templates_lock.lock().await;
+
             tracing::debug!("monitor_ipc_templates() task started");
             // a dedicated thread_ipc_client is used for waitNext requests
             // this is because waitNext requests are blocking, and we don't want to block the main
@@ -263,6 +268,10 @@ impl BitcoinCoreSv2 {
                     }
                 }
             }
+
+            // release the monitor_ipc_templates_lock so newly spawned monitor_ipc_templates() task
+            // can start
+            drop(monitor_ipc_templates_lock);
             tracing::debug!("monitor_ipc_templates() task exiting");
         });
     }
