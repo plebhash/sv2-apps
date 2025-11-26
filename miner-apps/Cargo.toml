@@ -4,7 +4,10 @@ resolver="2"
 members = [
     "jd-client",
     "translator",
-    "mining-device",
+]
+
+exclude = [
+    "mining-device"
 ]
 
 [profile.dev]
