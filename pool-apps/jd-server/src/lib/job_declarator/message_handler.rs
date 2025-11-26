@@ -1,30 +1,25 @@
-use binary_sv2::{Decodable, Serialize, U256};
-use bitcoin::{
-    consensus::Decodable as BitcoinDecodable,
-    hashes::{sha256d, Hash},
-    Transaction, Txid,
-};
-use job_declaration_sv2::{
-    AllocateMiningJobToken, AllocateMiningJobTokenSuccess, DeclareMiningJob, DeclareMiningJobError,
-    DeclareMiningJobSuccess, ProvideMissingTransactions, ProvideMissingTransactionsSuccess,
-    PushSolution,
-};
-use parsers_sv2::JobDeclaration;
-use roles_logic_sv2::{
-    errors::Error,
+use std::{convert::TryInto, io::Cursor, sync::Arc};
+use stratum_common::roles_logic_sv2::{
+    bitcoin::{
+        consensus::Decodable as BitcoinDecodable,
+        hashes::{sha256d, Hash},
+        Transaction, Txid,
+    },
+    codec_sv2::binary_sv2::{Decodable, Serialize, U256},
     handlers::{job_declaration::ParseJobDeclarationMessagesFromDownstream, SendTo_},
+    job_declaration_sv2::{
+        AllocateMiningJobToken, AllocateMiningJobTokenSuccess, DeclareMiningJob,
+        DeclareMiningJobError, DeclareMiningJobSuccess, ProvideMissingTransactions,
+        ProvideMissingTransactionsSuccess, PushSolution,
+    },
+    parsers_sv2::JobDeclaration,
     utils::Mutex,
-};
-use std::{
-    convert::TryInto,
-    io::Cursor,
-    sync::{atomic::Ordering, Arc},
 };
 pub type SendTo = SendTo_<JobDeclaration<'static>, ()>;
 use crate::mempool::JDsMempool;
 
 use super::{signed_token, TransactionState};
-use parsers_sv2::AnyMessage as AllMessages;
+use stratum_common::roles_logic_sv2::{errors::Error, parsers_sv2::AnyMessage as AllMessages};
 use tracing::{debug, info};
 
 use super::JobDeclaratorDownstream;
@@ -59,7 +54,7 @@ impl ParseJobDeclarationMessagesFromDownstream for JobDeclaratorDownstream {
             message.request_id
         );
         debug!("`AllocateMiningJobToken`: {:?}", message.request_id);
-        let token = self.tokens.fetch_add(1, Ordering::Relaxed);
+        let token = self.tokens.next();
         self.token_to_job_map.insert(token, None);
         let message_success = AllocateMiningJobTokenSuccess {
             request_id: message.request_id,

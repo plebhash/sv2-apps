@@ -30,10 +30,11 @@ use job_declarator::JobDeclarator;
 use mempool::error::JdsMempoolError;
 pub use rpc_sv2::Uri;
 use std::{ops::Sub, str::FromStr, sync::Arc};
-
-use codec_sv2::{StandardEitherFrame, StandardSv2Frame};
-use parsers_sv2::AnyMessage as JdsMessages;
-use roles_logic_sv2::utils::Mutex;
+use stratum_common::roles_logic_sv2::{
+    codec_sv2::{StandardEitherFrame, StandardSv2Frame},
+    parsers_sv2::AnyMessage as JdsMessages,
+    utils::Mutex,
+};
 use tokio::{select, task};
 use tracing::{error, info, warn};
 
@@ -41,7 +42,7 @@ use tracing::{error, info, warn};
 pub type Message = JdsMessages<'static>;
 
 /// SV2 frame carrying a parsed JDS message.
-pub type Sv2Frame = StandardSv2Frame<Message>;
+pub type StdFrame = StandardSv2Frame<Message>;
 
 /// SV2 frame that can be either a standard message or handshake frame.
 pub type EitherFrame = StandardEitherFrame<Message>;

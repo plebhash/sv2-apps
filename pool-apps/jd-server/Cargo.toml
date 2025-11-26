@@ -17,28 +17,20 @@ name = "jd_server"
 path = "src/lib/mod.rs"
 
 [dependencies]
-stratum-apps = { path = "../../stratum-apps", features = ["jd_server"] }
-roles_logic_sv2 = "5.0.0"
-binary_sv2 = "4.0.0"
-error_handling = "1.0.0"
-codec_sv2 = "3.0.1"
-framing_sv2 = "5.0.1"
-mining_sv2 = "5.0.1"
-noise_sv2 = "1.4.0"
-parsers_sv2 = "0.1.1"
-job_declaration_sv2 = "5.0.1"
-common_messages_sv2 = "6.0.1"
-network_helpers_sv2 = "4.0.1"
-rpc_sv2 = "1.1.1"
-bitcoin = "0.32.5"
+stratum-common = { git = "https://github.com/stratum-mining/stratum", rev = "v1.5.0", features = ["with_network_helpers"] }
 async-channel = "1.5.1"
+buffer_sv2 = { git = "https://github.com/stratum-mining/stratum", rev = "v1.5.0" }
 rand = "0.8.4"
 tokio = { version = "1.44.1", features = ["full"] }
 ext-config = { version = "0.14.0", features = ["toml"], package = "config" }
 tracing = { version = "0.1" }
+error_handling = { git = "https://github.com/stratum-mining/stratum", rev = "v1.5.0" }
 nohash-hasher = "0.2.0"
 serde_json = { version = "1.0", default-features = false, features = ["alloc","raw_value"] }
 serde = { version = "1.0.89", features = ["derive", "alloc"], default-features = false }
 hashbrown = { version = "0.11", default-features = false, features = ["ahash", "serde"] }
+key-utils = { git = "https://github.com/stratum-mining/stratum", rev = "v1.5.0" }
+rpc_sv2 = { git = "https://github.com/stratum-mining/stratum", rev = "v1.5.0" }
 hex = "0.4.3"
+config_helpers_sv2 = { git = "https://github.com/stratum-mining/stratum", rev = "v1.5.0" }
 clap = { version = "4.5.39", features = ["derive"] }

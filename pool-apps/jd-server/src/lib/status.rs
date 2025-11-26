@@ -8,8 +8,7 @@
 //!
 //! This allows for centralized, consistent error handling across the application.
 
-use error_handling;
-use parsers_sv2::Mining;
+use stratum_common::roles_logic_sv2::parsers_sv2::Mining;
 
 use super::error::JdsError;
 
@@ -154,15 +153,6 @@ pub async fn handle_error(sender: &Sender, e: JdsError) -> error_handling::Error
         }
         JdsError::InvalidRPCUrl => send_status(sender, e, error_handling::ErrorBranch::Break).await,
         JdsError::BadCliArgs => send_status(sender, e, error_handling::ErrorBranch::Break).await,
-        JdsError::InvalidPrevHash => {
-            send_status(sender, e, error_handling::ErrorBranch::Break).await
-        }
-        JdsError::InvalidCoinbase => {
-            send_status(sender, e, error_handling::ErrorBranch::Break).await
-        }
-        JdsError::InvalidMerkleRoot => {
-            send_status(sender, e, error_handling::ErrorBranch::Break).await
-        }
     }
 }
 
@@ -172,12 +162,11 @@ mod tests {
 
     use super::*;
     use async_channel::{bounded, RecvError};
-    use binary_sv2;
-    use codec_sv2;
-    use framing_sv2;
-    use mining_sv2::OpenMiningChannelError;
-    use noise_sv2;
-    use roles_logic_sv2;
+    use stratum_common::roles_logic_sv2::{
+        self,
+        codec_sv2::{self, binary_sv2, noise_sv2},
+        mining_sv2::OpenMiningChannelError,
+    };
 
     #[tokio::test]
     async fn test_send_status_downstream_listener_shutdown() {
@@ -349,7 +338,7 @@ mod tests {
     async fn test_handle_error_framing_error() {
         let (tx, rx) = bounded(1);
         let sender = Sender::Downstream(tx);
-        let error = JdsError::Framing(framing_sv2::Error::ExpectedHandshakeFrame);
+        let error = JdsError::Framing(codec_sv2::framing_sv2::Error::ExpectedHandshakeFrame);
         let error_string = error.to_string();
         handle_error(&sender, error).await;
         match rx.recv().await {

@@ -13,16 +13,16 @@
 //! This module ensures that all errors can be passed around consistently, including across async
 //! boundaries.
 
-use binary_sv2;
-use codec_sv2;
-use framing_sv2;
-use noise_sv2;
-use parsers_sv2::Mining;
-use roles_logic_sv2;
 use std::{
     convert::From,
     fmt::Debug,
     sync::{MutexGuard, PoisonError},
+};
+
+use stratum_common::roles_logic_sv2::{
+    self,
+    codec_sv2::{self, binary_sv2, noise_sv2},
+    parsers_sv2::Mining,
 };
 
 use crate::mempool::error::JdsMempoolError;
@@ -36,7 +36,7 @@ pub enum JdsError {
     Codec(codec_sv2::Error),
     Noise(noise_sv2::Error),
     RolesLogic(roles_logic_sv2::Error),
-    Framing(framing_sv2::Error),
+    Framing(codec_sv2::framing_sv2::Error),
     PoisonLock(String),
     Custom(String),
     Sv2ProtocolError((u32, Mining<'static>)),
@@ -45,9 +45,6 @@ pub enum JdsError {
     NoLastDeclaredJob,
     InvalidRPCUrl,
     BadCliArgs,
-    InvalidPrevHash,
-    InvalidCoinbase,
-    InvalidMerkleRoot,
 }
 
 impl std::fmt::Display for JdsError {
@@ -74,9 +71,6 @@ impl std::fmt::Display for JdsError {
             NoLastDeclaredJob => write!(f, "Last declared job not found"),
             InvalidRPCUrl => write!(f, "Invalid Template Provider RPC URL"),
             BadCliArgs => write!(f, "Bad CLI arg input"),
-            InvalidPrevHash => write!(f, "Invalid previous hash"),
-            InvalidCoinbase => write!(f, "Invalid coinbase"),
-            InvalidMerkleRoot => write!(f, "Invalid merkle root"),
         }
     }
 }
@@ -128,8 +122,8 @@ impl From<String> for JdsError {
         JdsError::Custom(e)
     }
 }
-impl From<framing_sv2::Error> for JdsError {
-    fn from(e: framing_sv2::Error) -> JdsError {
+impl From<codec_sv2::framing_sv2::Error> for JdsError {
+    fn from(e: codec_sv2::framing_sv2::Error) -> JdsError {
         JdsError::Framing(e)
     }
 }

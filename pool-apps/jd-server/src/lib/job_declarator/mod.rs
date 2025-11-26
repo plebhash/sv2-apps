@@ -19,37 +19,32 @@
 
 pub mod message_handler;
 use super::{
-    error::JdsError, mempool::JDsMempool, status, EitherFrame, JobDeclaratorServerConfig, Sv2Frame,
+    error::JdsError, mempool::JDsMempool, status, EitherFrame, JobDeclaratorServerConfig, StdFrame,
 };
 use async_channel::{Receiver, Sender};
-use binary_sv2::{self, B0255, U256};
-use bitcoin::{
-    block::{Header, Version},
-    consensus::{deserialize, encode::serialize},
-    hashes::{sha256d::Hash as DHash, Hash},
-    Amount, Block, BlockHash, CompactTarget, Transaction, TxOut, Txid,
-};
-use codec_sv2::HandshakeRole;
-use common_messages_sv2::{
-    Protocol, SetupConnection, SetupConnectionError, SetupConnectionSuccess,
-};
 use core::panic;
 use error_handling::handle_result;
-use job_declaration_sv2::{DeclareMiningJob, PushSolution};
-use network_helpers_sv2::noise_connection::Connection;
+use key_utils::{Secp256k1PublicKey, Secp256k1SecretKey, SignatureService};
 use nohash_hasher::BuildNoHashHasher;
-use noise_sv2::Responder;
-use parsers_sv2::{AnyMessage as JdsMessages, JobDeclaration};
-use roles_logic_sv2::{
-    handlers::job_declaration::{ParseJobDeclarationMessagesFromDownstream, SendTo},
-    utils::Mutex,
+use std::{collections::HashMap, convert::TryInto, sync::Arc};
+use stratum_common::{
+    network_helpers_sv2::noise_connection::Connection,
+    roles_logic_sv2::{
+        self,
+        bitcoin::{consensus::encode::serialize, Amount, Block, Transaction, TxOut, Txid},
+        codec_sv2::{
+            binary_sv2::{self, B0255, U256},
+            HandshakeRole, Responder,
+        },
+        common_messages_sv2::{
+            Protocol, SetupConnection, SetupConnectionError, SetupConnectionSuccess,
+        },
+        handlers::job_declaration::{ParseJobDeclarationMessagesFromDownstream, SendTo},
+        job_declaration_sv2::{DeclareMiningJob, PushSolution},
+        parsers_sv2::{AnyMessage as JdsMessages, JobDeclaration},
+        utils::{Id, Mutex},
+    },
 };
-use std::{
-    collections::HashMap,
-    convert::TryInto,
-    sync::{atomic::AtomicU32, Arc},
-};
-use stratum_apps::key_utils::{Secp256k1PublicKey, Secp256k1SecretKey, SignatureService};
 use tokio::{net::TcpListener, time::Duration};
 use tracing::{debug, error, info};
 
@@ -99,7 +94,7 @@ pub struct JobDeclaratorDownstream {
     // TODO: use coinbase output
     coinbase_output: Vec<u8>,
     token_to_job_map: HashMap<u32, Option<u8>, BuildNoHashHasher<u32>>,
-    tokens: AtomicU32,
+    tokens: Id,
     public_key: Secp256k1PublicKey,
     private_key: Secp256k1SecretKey,
     mempool: Arc<Mutex<JDsMempool>>,
@@ -124,7 +119,7 @@ impl JobDeclaratorDownstream {
     ) -> Self {
         // TODO: use next variables
         let token_to_job_map = HashMap::with_hasher(BuildNoHashHasher::default());
-        let tokens = AtomicU32::new(0);
+        let tokens = Id::new();
         let add_txs_to_mempool_inner = AddTrasactionsToMempoolInner {
             known_transactions: vec![],
             unknown_transactions: vec![],
@@ -161,46 +156,10 @@ impl JobDeclaratorDownstream {
             .safe_lock(|x| x.declared_mining_job.clone())
             .map_err(|e| Box::new(JdsError::PoisonLock(e.to_string())))?;
         let last_declare = last_declare_.ok_or(Box::new(JdsError::NoLastDeclaredJob))?;
-        let mut transactions_list = Self::collect_txs_in_job(self_mutex)?;
-
-        let hash: [u8; 32] = message
-            .prev_hash
-            .to_vec()
-            .try_into()
-            .map_err(|_| Box::new(JdsError::InvalidPrevHash))?;
-        let hash = Hash::from_slice(&hash).expect("32 bytes should always be valid sha256d hash");
-        let prev_blockhash = BlockHash::from_raw_hash(hash);
-
-        let dummy_merkle_root =
-            DHash::from_slice(&[0u8; 32]).expect("32 bytes should always be valid sha256d hash");
-
-        let header = Header {
-            version: Version::from_consensus(message.version as i32),
-            prev_blockhash,
-            merkle_root: dummy_merkle_root.into(),
-            time: message.ntime,
-            bits: CompactTarget::from_consensus(message.nbits),
-            nonce: message.nonce,
-        };
-
-        let mut serialized_coinbase = Vec::new();
-        serialized_coinbase.extend_from_slice(last_declare.coinbase_tx_prefix.to_vec().as_slice());
-        serialized_coinbase.extend_from_slice(message.extranonce.to_vec().as_slice());
-        serialized_coinbase.extend_from_slice(last_declare.coinbase_tx_suffix.to_vec().as_slice());
-        let coinbase = deserialize(&serialized_coinbase[..])
-            .map_err(|_| Box::new(JdsError::InvalidCoinbase))?;
-        transactions_list.insert(0, coinbase);
-
-        let mut block = Block {
-            header,
-            txdata: transactions_list,
-        };
-
-        let merkle_root = block
-            .compute_merkle_root()
-            .ok_or(Box::new(JdsError::InvalidMerkleRoot))?;
-        block.header.merkle_root = merkle_root;
-
+        let transactions_list = Self::collect_txs_in_job(self_mutex)?;
+        let block: Block =
+            roles_logic_sv2::utils::BlockCreator::new(last_declare, transactions_list, message)
+                .into();
         Ok(hex::encode(serialize(&block)))
     }
 
@@ -270,12 +229,12 @@ impl JobDeclaratorDownstream {
 
     /// Sends a single Job Declaration message back to the downstream client.
     ///
-    /// Wraps the message into a `Sv2Frame` and sends it through the established channel.
+    /// Wraps the message into a `StdFrame` and sends it through the established channel.
     pub async fn send(
         self_mutex: Arc<Mutex<Self>>,
-        message: parsers_sv2::JobDeclaration<'static>,
+        message: roles_logic_sv2::parsers_sv2::JobDeclaration<'static>,
     ) -> Result<(), ()> {
-        let sv2_frame: Sv2Frame = JdsMessages::JobDeclaration(message).try_into().unwrap();
+        let sv2_frame: StdFrame = JdsMessages::JobDeclaration(message).try_into().unwrap();
         let sender = self_mutex.safe_lock(|self_| self_.sender.clone()).unwrap();
         sender.send(sv2_frame.into()).await.map_err(|_| ())?;
         Ok(())
@@ -299,7 +258,7 @@ impl JobDeclaratorDownstream {
             loop {
                 match recv.recv().await {
                     Ok(message) => {
-                        let mut frame: Sv2Frame = handle_result!(tx_status, message.try_into());
+                        let mut frame: StdFrame = handle_result!(tx_status, message.try_into());
                         let header = frame
                             .get_header()
                             .ok_or_else(|| JdsError::Custom(String::from("No header set")));
@@ -583,7 +542,7 @@ impl JobDeclarator {
                                     flags: (setup_connection.flags & 1u32),
                                 };
                                 info!("Sending success message for proxy");
-                                let sv2_frame: Sv2Frame = JdsMessages::Common(success_message.into())
+                                let sv2_frame: StdFrame = JdsMessages::Common(success_message.into())
         .try_into()
         .expect("Failed to convert setup connection response message to standard frame");
 
@@ -617,7 +576,7 @@ impl JobDeclarator {
                                         .unwrap(),
                                 };
                                 info!("Sending error message for proxy");
-                                let sv2_frame: Sv2Frame = JdsMessages::Common(error_message.into())
+                                let sv2_frame: StdFrame = JdsMessages::Common(error_message.into())
         .try_into()
         .expect("Failed to convert setup connection response message to standard frame");
 
