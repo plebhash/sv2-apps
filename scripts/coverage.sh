@@ -8,8 +8,15 @@ tarpaulin() {
   
   echo "Running tarpaulin for $workspace_name..."
   mkdir -p "$output_dir"
-  # Use command-line arguments to ensure correct output location
-  cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml --output-dir "$output_dir"
+  
+  # Check if this is a workspace or a single package
+  if grep -q "^\[workspace\]" Cargo.toml 2>/dev/null; then
+    echo "Detected workspace, using --workspace flag"
+    cargo +nightly tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml --output-dir "$output_dir"
+  else
+    echo "Detected single package, not using --workspace flag"
+    cargo +nightly tarpaulin --verbose --all-features --timeout 120 --out Xml --output-dir "$output_dir"
+  fi
   
   # Verify the output file was created
   if [ -f "$output_dir/cobertura.xml" ]; then
