@@ -1,6 +1,6 @@
 #![allow(special_module_name)]
 #![allow(clippy::option_map_unit_fn)]
-use stratum_apps::key_utils::Secp256k1PublicKey;
+use key_utils::Secp256k1PublicKey;
 
 use clap::Parser;
 use tracing::info;

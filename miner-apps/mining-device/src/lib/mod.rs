@@ -1,22 +1,9 @@
 #![allow(clippy::option_map_unit_fn)]
 use async_channel::{Receiver, Sender};
-use codec_sv2::{self, StandardEitherFrame, StandardSv2Frame};
-use common_messages_sv2::{Protocol, SetupConnection, SetupConnectionSuccess};
-use mining_sv2::*;
-use network_helpers_sv2::noise_connection::Connection;
-use noise_sv2::Initiator;
+use key_utils::Secp256k1PublicKey;
 use num_format::{Locale, ToFormattedString};
-use parsers_sv2::{Mining, MiningDeviceMessages};
 use primitive_types::U256;
 use rand::{thread_rng, Rng};
-use roles_logic_sv2::{
-    errors::Error,
-    handlers::{
-        common::ParseCommonMessagesFromUpstream,
-        mining::{ParseMiningMessagesFromUpstream, SendTo, SupportedChannelTypes},
-    },
-    utils::Mutex,
-};
 use std::{
     net::{SocketAddr, ToSocketAddrs},
     sync::{
@@ -26,22 +13,33 @@ use std::{
     thread::available_parallelism,
     time::{Duration, Instant},
 };
-use stratum_apps::{
-    key_utils::Secp256k1PublicKey,
-    stratum_core::bitcoin::{
-        blockdata::block::Header, hash_types::BlockHash, hashes::Hash, CompactTarget,
+use stratum_common::{
+    network_helpers_sv2::noise_connection::Connection,
+    roles_logic_sv2::{
+        self,
+        bitcoin::{blockdata::block::Header, hash_types::BlockHash, hashes::Hash, CompactTarget},
+        codec_sv2,
+        codec_sv2::{Initiator, StandardEitherFrame, StandardSv2Frame},
+        common_messages_sv2::{Protocol, SetupConnection, SetupConnectionSuccess},
+        errors::Error,
+        handlers::{
+            common::ParseCommonMessagesFromUpstream,
+            mining::{ParseMiningMessagesFromUpstream, SendTo, SupportedChannelTypes},
+        },
+        mining_sv2::*,
+        parsers_sv2::{Mining, MiningDeviceMessages},
+        utils::{Id, Mutex},
     },
 };
 use tokio::net::TcpStream;
 use tracing::{debug, error, info};
-
-use stratum_apps::stratum_core::bitcoin::consensus::encode::serialize as btc_serialize;
 
 // Fast SHA256d midstate hasher
 use sha2::{
     compress256,
     digest::generic_array::{typenum::U64, GenericArray},
 };
+use stratum_common::roles_logic_sv2::bitcoin::consensus::encode::serialize as btc_serialize;
 
 // Tuneable: how many nonces to try per mining loop iteration when fast hasher is available.
 // Runtime-configurable so the binary and benches can adjust it without changing code.
@@ -151,13 +149,12 @@ pub async fn connect(
 }
 
 pub type Message = MiningDeviceMessages<'static>;
-pub type Sv2Frame = StandardSv2Frame<Message>;
+pub type StdFrame = StandardSv2Frame<Message>;
 pub type EitherFrame = StandardEitherFrame<Message>;
 
 struct SetupConnectionHandler {}
-use common_messages_sv2::Reconnect;
 use std::convert::TryInto;
-use stratum_apps::stratum_core::bitcoin::block::Version;
+use stratum_common::roles_logic_sv2::{bitcoin::block::Version, common_messages_sv2::Reconnect};
 
 impl SetupConnectionHandler {
     pub fn new() -> Self {
@@ -198,14 +195,14 @@ impl SetupConnectionHandler {
     ) {
         let setup_connection = Self::get_setup_connection_message(address, device_id);
 
-        let sv2_frame: Sv2Frame = MiningDeviceMessages::Common(setup_connection.into())
+        let sv2_frame: StdFrame = MiningDeviceMessages::Common(setup_connection.into())
             .try_into()
             .unwrap();
         let sv2_frame = sv2_frame.into();
         sender.send(sv2_frame).await.unwrap();
         info!("Setup connection sent to {}", address);
 
-        let mut incoming: Sv2Frame = receiver.recv().await.unwrap().try_into().unwrap();
+        let mut incoming: StdFrame = receiver.recv().await.unwrap().try_into().unwrap();
         let message_type = incoming.get_header().unwrap().msg_type();
         let payload = incoming.payload();
         ParseCommonMessagesFromUpstream::handle_message_common(self_, message_type, payload)
@@ -228,7 +225,7 @@ impl ParseCommonMessagesFromUpstream for SetupConnectionHandler {
 
     fn handle_setup_connection_error(
         &mut self,
-        _: common_messages_sv2::SetupConnectionError,
+        _: roles_logic_sv2::common_messages_sv2::SetupConnectionError,
     ) -> Result<roles_logic_sv2::handlers::common::SendTo, roles_logic_sv2::errors::Error> {
         error!("Setup connection error");
         todo!()
@@ -236,7 +233,7 @@ impl ParseCommonMessagesFromUpstream for SetupConnectionHandler {
 
     fn handle_channel_endpoint_changed(
         &mut self,
-        _: common_messages_sv2::ChannelEndpointChanged,
+        _: roles_logic_sv2::common_messages_sv2::ChannelEndpointChanged,
     ) -> Result<roles_logic_sv2::handlers::common::SendTo, roles_logic_sv2::errors::Error> {
         todo!()
     }
@@ -266,7 +263,7 @@ pub struct Device {
     miner: Arc<Mutex<Miner>>,
     jobs: Vec<NewMiningJob<'static>>,
     prev_hash: Option<SetNewPrevHash<'static>>,
-    sequence_numbers: AtomicU32,
+    sequence_numbers: Id,
     notify_changes_to_mining_thread: NewWorkNotifier,
 }
 
@@ -332,7 +329,7 @@ impl Device {
             jobs: Vec::new(),
             prev_hash: None,
             channel_id: None,
-            sequence_numbers: AtomicU32::new(0),
+            sequence_numbers: Id::new(),
             notify_changes_to_mining_thread: NewWorkNotifier {
                 should_send: true,
                 sender: notify_changes_to_mining_thread,
@@ -341,7 +338,7 @@ impl Device {
         let open_channel = MiningDeviceMessages::Mining(Mining::OpenStandardMiningChannel(
             open_channel(user_id, nominal_hashrate_multiplier, handicap),
         ));
-        let frame: Sv2Frame = open_channel.try_into().unwrap();
+        let frame: StdFrame = open_channel.try_into().unwrap();
         self_.sender.send(frame.into()).await.unwrap();
         let self_mutex = std::sync::Arc::new(Mutex::new(self_));
         let cloned = self_mutex.clone();
@@ -361,7 +358,7 @@ impl Device {
         });
 
         loop {
-            let mut incoming: Sv2Frame = receiver.recv().await.unwrap().try_into().unwrap();
+            let mut incoming: StdFrame = receiver.recv().await.unwrap().try_into().unwrap();
             let message_type = incoming.get_header().unwrap().msg_type();
             let payload = incoming.payload();
             let next =
@@ -370,10 +367,10 @@ impl Device {
                 .safe_lock(|s| s.notify_changes_to_mining_thread.clone())
                 .unwrap();
             if notify_changes_to_mining_thread.should_send
-                && (message_type == stratum_apps::stratum_core::mining_sv2::MESSAGE_TYPE_NEW_MINING_JOB
+                && (message_type == roles_logic_sv2::mining_sv2::MESSAGE_TYPE_NEW_MINING_JOB
                     || message_type
-                        == stratum_apps::stratum_core::mining_sv2::MESSAGE_TYPE_MINING_SET_NEW_PREV_HASH
-                    || message_type == stratum_apps::stratum_core::mining_sv2::MESSAGE_TYPE_SET_TARGET)
+                        == roles_logic_sv2::mining_sv2::MESSAGE_TYPE_MINING_SET_NEW_PREV_HASH
+                    || message_type == roles_logic_sv2::mining_sv2::MESSAGE_TYPE_SET_TARGET)
             {
                 notify_changes_to_mining_thread
                     .sender
@@ -384,7 +381,7 @@ impl Device {
             };
             match next {
                 SendTo::RelayNewMessageToRemote(_, m) => {
-                    let sv2_frame: Sv2Frame = MiningDeviceMessages::Mining(m).try_into().unwrap();
+                    let sv2_frame: StdFrame = MiningDeviceMessages::Mining(m).try_into().unwrap();
                     let either_frame: EitherFrame = sv2_frame.into();
                     sender.send(either_frame).await.unwrap();
                 }
@@ -404,15 +401,13 @@ impl Device {
         let share =
             MiningDeviceMessages::Mining(Mining::SubmitSharesStandard(SubmitSharesStandard {
                 channel_id: self_mutex.safe_lock(|s| s.channel_id.unwrap()).unwrap(),
-                sequence_number: self_mutex
-                    .safe_lock(|s| s.sequence_numbers.fetch_add(1, Ordering::Relaxed))
-                    .unwrap(),
+                sequence_number: self_mutex.safe_lock(|s| s.sequence_numbers.next()).unwrap(),
                 job_id,
                 nonce,
                 ntime,
                 version,
             }));
-        let frame: Sv2Frame = share.try_into().unwrap();
+        let frame: StdFrame = share.try_into().unwrap();
         let sender = self_mutex.safe_lock(|s| s.sender.clone()).unwrap();
         sender.send(frame.into()).await.unwrap();
     }

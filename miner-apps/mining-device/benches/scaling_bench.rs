@@ -9,7 +9,7 @@ use std::{
     thread,
     time::Instant,
 };
-use stratum_apps::stratum_core::bitcoin::{
+use stratum_common::roles_logic_sv2::bitcoin::{
     block::Version, blockdata::block::Header, hash_types::BlockHash, hashes::Hash, CompactTarget,
 };
 
