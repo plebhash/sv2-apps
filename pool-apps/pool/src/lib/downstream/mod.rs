@@ -1,16 +1,18 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, AtomicU32},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc,
     },
 };
 
 use async_channel::{unbounded, Receiver, Sender};
 use stratum_apps::{
+    config_helpers::CoinbaseRewardScript,
     custom_mutex::Mutex,
     network_helpers::noise_stream::NoiseTcpStream,
     stratum_core::{
+        bitcoin::{Amount, TxOut},
         channels_sv2::server::{
             extended::ExtendedChannel,
             group::GroupChannel,
@@ -22,6 +24,7 @@ use stratum_apps::{
         handlers_sv2::{HandleCommonMessagesFromClientAsync, HandleExtensionsFromClientAsync},
         noise_sv2::Error,
         parsers_sv2::{parse_message_frame_with_tlvs, AnyMessage, Mining, Tlv},
+        template_distribution_sv2::{NewTemplate, SetNewPrevHash as SetNewPrevHashTdp},
     },
     task_manager::TaskManager,
     utils::{
@@ -33,6 +36,7 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, warn};
 
 use crate::{
+    channel_manager::FULL_EXTRANONCE_SIZE,
     error::{PoolError, PoolResult},
     io_task::spawn_io_tasks,
     status::{handle_error, Status, StatusSender},
@@ -46,12 +50,12 @@ mod extensions_message_handler;
 ///
 /// This includes:
 /// - Whether the downstream requires a standard job (`require_std_job`).
-/// - An optional [`GroupChannel`] if group channeling is used.
+/// - A [`GroupChannel`].
 /// - Active [`ExtendedChannel`]s keyed by channel ID.
 /// - Active [`StandardChannel`]s keyed by channel ID.
 /// - Extensions that have been successfully negotiated with this client
 pub struct DownstreamData {
-    pub group_channels: Option<GroupChannel<'static, DefaultJobStore<ExtendedJob<'static>>>>,
+    pub group_channel: GroupChannel<'static, DefaultJobStore<ExtendedJob<'static>>>,
     pub extended_channels:
         HashMap<ChannelId, ExtendedChannel<'static, DefaultJobStore<ExtendedJob<'static>>>>,
     pub standard_channels:
@@ -93,7 +97,7 @@ pub struct Downstream {
 
 impl Downstream {
     /// Creates a new [`Downstream`] instance and spawns the necessary I/O tasks.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::result_large_err)]
     pub fn new(
         downstream_id: DownstreamId,
         channel_manager_sender: Sender<(DownstreamId, Mining<'static>, Option<Vec<Tlv>>)>,
@@ -108,7 +112,11 @@ impl Downstream {
         status_sender: Sender<Status>,
         supported_extensions: Vec<u16>,
         required_extensions: Vec<u16>,
-    ) -> Self {
+        pool_tag_string: String,
+        last_future_template: NewTemplate<'static>,
+        last_new_prev_hash: SetNewPrevHashTdp<'static>,
+        coinbase_reward_script: CoinbaseRewardScript,
+    ) -> Result<Self, PoolError> {
         let (noise_stream_reader, noise_stream_writer) = noise_stream.into_split();
         let status_sender = StatusSender::Downstream {
             downstream_id,
@@ -132,14 +140,52 @@ impl Downstream {
             downstream_sender: outbound_tx,
             downstream_receiver: inbound_rx,
         };
+
+        let channel_id_factory = AtomicU32::new(1);
+        let group_channel_id = channel_id_factory.fetch_add(1, Ordering::SeqCst);
+        let mut group_channel = match GroupChannel::new_for_pool(
+            group_channel_id,
+            DefaultJobStore::new(),
+            FULL_EXTRANONCE_SIZE,
+            pool_tag_string.clone(),
+        ) {
+            Ok(channel) => channel,
+            Err(e) => {
+                error!(?e, "Failed to create group channel");
+                return Err(PoolError::FailedToCreateGroupChannel(e));
+            }
+        };
+
+        let coinbase_output = TxOut {
+            value: Amount::from_sat(last_future_template.coinbase_tx_value_remaining),
+            script_pubkey: coinbase_reward_script.script_pubkey(),
+        };
+
+        match group_channel.on_new_template(last_future_template, vec![coinbase_output.clone()]) {
+            Ok(()) => {}
+            Err(e) => {
+                error!(?e, "Failed to add template to group channel");
+                return Err(PoolError::FailedToCreateGroupChannel(e));
+            }
+        }
+
+        match group_channel.on_set_new_prev_hash(last_new_prev_hash) {
+            Ok(()) => {}
+            Err(e) => {
+                error!(?e, "Failed to set new prevhash for group channel");
+                return Err(PoolError::FailedToCreateGroupChannel(e));
+            }
+        }
+
         let downstream_data = Arc::new(Mutex::new(DownstreamData {
             extended_channels: HashMap::new(),
             standard_channels: HashMap::new(),
-            group_channels: None,
-            channel_id_factory: AtomicU32::new(1),
+            group_channel,
+            channel_id_factory,
             negotiated_extensions: vec![],
         }));
-        Downstream {
+
+        Ok(Downstream {
             downstream_channel,
             downstream_data,
             downstream_id,
@@ -147,7 +193,7 @@ impl Downstream {
             requires_custom_work: Arc::new(AtomicBool::new(false)),
             supported_extensions,
             required_extensions,
-        }
+        })
     }
 
     /// Starts the downstream loop.

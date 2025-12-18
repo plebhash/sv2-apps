@@ -241,8 +241,16 @@ impl ChannelManager {
                                     .channel_manager_data
                                     .super_safe_lock(|data| data.downstream_id_factory.fetch_add(1, Ordering::SeqCst));
 
+                                let Some(last_future_template) = self.channel_manager_data.super_safe_lock(|data| data.last_future_template.clone()) else {
+                                    error!("No future template found");
+                                    continue;
+                                };
+                                let Some(last_new_prev_hash) = self.channel_manager_data.super_safe_lock(|data| data.last_new_prev_hash.clone()) else {
+                                    error!("No new prevhash found");
+                                    continue;
+                                };
 
-                                let downstream = Downstream::new(
+                                let downstream = match Downstream::new(
                                     downstream_id,
                                     channel_manager_sender.clone(),
                                     channel_manager_receiver.clone(),
@@ -252,7 +260,17 @@ impl ChannelManager {
                                     status_sender.clone(),
                                     self.supported_extensions.clone(),
                                     self.required_extensions.clone(),
-                                );
+                                    self.pool_tag_string.clone(),
+                                    last_future_template,
+                                    last_new_prev_hash,
+                                    self.coinbase_reward_script.clone(),
+                                ) {
+                                    Ok(downstream) => downstream,
+                                    Err(e) => {
+                                        error!(error = ?e, "Failed to create downstream");
+                                        continue;
+                                    }
+                                };
 
 
                                 self.channel_manager_data.super_safe_lock(|data| {

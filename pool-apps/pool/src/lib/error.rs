@@ -106,6 +106,14 @@ pub enum PoolError {
     FailedToSendCoinbaseOutputConstraints,
     /// BitcoinCoreSv2 cancellation token activated
     BitcoinCoreSv2CancellationTokenActivated,
+    /// Job not found
+    JobNotFound,
+    /// Failed to process NewTemplate message
+    FailedToProcessNewTemplate,
+    /// Failed to process SetNewPrevHash message
+    FailedToProcessSetNewPrevHash,
+    /// Failed to add channel id to group channel
+    FailedToAddChannelIdToGroupChannel(GroupChannelError),
 }
 
 impl std::fmt::Display for PoolError {
@@ -188,6 +196,18 @@ impl std::fmt::Display for PoolError {
             }
             BitcoinCoreSv2CancellationTokenActivated => {
                 write!(f, "BitcoinCoreSv2 cancellation token activated")
+            }
+            JobNotFound => {
+                write!(f, "Job not found")
+            }
+            FailedToProcessNewTemplate => {
+                write!(f, "Failed to process new template")
+            }
+            FailedToProcessSetNewPrevHash => {
+                write!(f, "Failed to process set new prev hash")
+            }
+            FailedToAddChannelIdToGroupChannel(ref e) => {
+                write!(f, "Failed to add channel id to group channel: {e:?}")
             }
         }
     }
