@@ -12,7 +12,9 @@ use ext_config::ConfigError;
 use std::{fmt, sync::PoisonError};
 use stratum_apps::{
     stratum_core::{
-        binary_sv2, framing_sv2,
+        binary_sv2,
+        channels_sv2::client::error::GroupChannelError,
+        framing_sv2,
         handlers_sv2::HandlerErrorType,
         noise_sv2,
         parsers_sv2::{self, ParserError},
@@ -82,6 +84,14 @@ pub enum TproxyError {
     DownstreamNotFound(u32),
     /// Error about TLV encoding/decoding
     TlvError(parsers_sv2::TlvError),
+    /// Channel not found
+    ChannelNotFound,
+    /// Failed to process SetNewPrevHash message
+    FailedToProcessSetNewPrevHash,
+    /// Failed to process NewExtendedMiningJob message
+    FailedToProcessNewExtendedMiningJob,
+    /// Failed to add channel id to group channel
+    FailedToAddChannelIdToGroupChannel(GroupChannelError),
 }
 
 impl std::error::Error for TproxyError {}
@@ -145,6 +155,14 @@ impl fmt::Display for TproxyError {
                 "Downstream id associated to request id: {request_id} not found"
             ),
             TlvError(ref e) => write!(f, "TLV error: {e:?}"),
+            ChannelNotFound => write!(f, "Channel not found"),
+            FailedToProcessSetNewPrevHash => write!(f, "Failed to process SetNewPrevHash message"),
+            FailedToProcessNewExtendedMiningJob => {
+                write!(f, "Failed to process NewExtendedMiningJob message")
+            }
+            FailedToAddChannelIdToGroupChannel(ref e) => {
+                write!(f, "Failed to add channel id to group channel: {e:?}")
+            }
         }
     }
 }
