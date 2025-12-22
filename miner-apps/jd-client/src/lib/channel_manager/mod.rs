@@ -17,6 +17,7 @@ use stratum_apps::{
         bitcoin::{Target, TxOut},
         channels_sv2::{
             client::extended::ExtendedChannel,
+            outputs::deserialize_outputs,
             server::{
                 jobs::{
                     extended::ExtendedJob, factory::JobFactory, job_store::DefaultJobStore,
@@ -427,7 +428,34 @@ impl ChannelManager {
                                     .channel_manager_data
                                     .super_safe_lock(|data| data.downstream_id_factory.fetch_add(1, Ordering::Relaxed));
 
-                                let downstream = Downstream::new(
+                                let full_extranonce_size = self.channel_manager_data
+                                    .super_safe_lock(|data| {
+                                        data.upstream_channel.as_ref().map(|channel| channel
+                                            .get_full_extranonce_size())
+                                            .unwrap_or(FULL_EXTRANONCE_SIZE) // Default to FULL_EXTRANONCE_SIZE if upstream channel is not present (solo mining mode)
+                                    });
+
+                                let pool_tag_string = self.channel_manager_data.super_safe_lock(|data| data.pool_tag_string.clone());
+
+                                let Some(last_future_template) = self.channel_manager_data.super_safe_lock(|data| data.last_future_template.clone()) else {
+                                    error!("No future template found");
+                                    continue;
+                                };
+                                let Some(last_new_prev_hash) = self.channel_manager_data.super_safe_lock(|data| data.last_new_prev_hash.clone()) else {
+                                    error!("No new prevhash found");
+                                    continue;
+                                };
+                                let coinbase_outputs = self.channel_manager_data.super_safe_lock(|data| data.coinbase_outputs.clone());
+
+                                let coinbase_outputs = match deserialize_outputs(coinbase_outputs) {
+                                    Ok(outputs) => outputs,
+                                    Err(e) => {
+                                        error!(error = ?e, "Failed to deserialize coinbase outputs");
+                                        continue;
+                                    }
+                                };
+
+                                let downstream = match Downstream::new(
                                     downstream_id,
                                     channel_manager_sender.clone(),
                                     channel_manager_receiver.clone(),
@@ -437,7 +465,19 @@ impl ChannelManager {
                                     status_sender.clone(),
                                     supported_extensions.clone(),
                                     required_extensions.clone(),
-                                );
+                                    full_extranonce_size,
+                                    pool_tag_string,
+                                    self.miner_tag_string.clone(),
+                                    last_future_template,
+                                    last_new_prev_hash,
+                                    coinbase_outputs,
+                                ) {
+                                    Ok(downstream) => downstream,
+                                    Err(e) => {
+                                        error!(error = ?e, "Failed to create downstream");
+                                        continue;
+                                    }
+                                };
 
                                 self.channel_manager_data.super_safe_lock(|data| {
                                     data.downstream.insert(downstream_id, downstream.clone());

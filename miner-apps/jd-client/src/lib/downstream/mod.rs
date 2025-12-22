@@ -1,6 +1,9 @@
 use std::{
     collections::HashMap,
-    sync::{atomic::AtomicU32, Arc},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
 };
 
 use async_channel::{unbounded, Receiver, Sender};
@@ -8,6 +11,7 @@ use stratum_apps::{
     custom_mutex::Mutex,
     network_helpers::noise_stream::NoiseTcpStream,
     stratum_core::{
+        bitcoin::{Amount, TxOut},
         channels_sv2::server::{
             extended::ExtendedChannel,
             group::GroupChannel,
@@ -17,6 +21,7 @@ use stratum_apps::{
         common_messages_sv2::MESSAGE_TYPE_SETUP_CONNECTION,
         handlers_sv2::{HandleCommonMessagesFromClientAsync, HandleExtensionsFromClientAsync},
         parsers_sv2::{parse_message_frame_with_tlvs, AnyMessage, Mining, Tlv},
+        template_distribution_sv2::{NewTemplate, SetNewPrevHash as SetNewPrevHashTdp},
     },
     task_manager::TaskManager,
     utils::types::{DownstreamId, Message, Sv2Frame},
@@ -46,7 +51,7 @@ mod extensions_message_handler;
 /// - Active [`StandardChannel`]s keyed by channel ID.
 pub struct DownstreamData {
     pub require_std_job: bool,
-    pub group_channels: Option<GroupChannel<'static, DefaultJobStore<ExtendedJob<'static>>>>,
+    pub group_channel: GroupChannel<'static, DefaultJobStore<ExtendedJob<'static>>>,
     pub extended_channels:
         HashMap<ChannelId, ExtendedChannel<'static, DefaultJobStore<ExtendedJob<'static>>>>,
     pub standard_channels:
@@ -101,7 +106,13 @@ impl Downstream {
         status_sender: Sender<Status>,
         supported_extensions: Vec<u16>,
         required_extensions: Vec<u16>,
-    ) -> Self {
+        full_extranonce_size: usize,
+        pool_tag_string: Option<String>,
+        miner_tag_string: String,
+        last_future_template: NewTemplate<'static>,
+        last_new_prev_hash: SetNewPrevHashTdp<'static>,
+        mut coinbase_outputs: Vec<TxOut>,
+    ) -> Result<Self, JDCError> {
         let (noise_stream_reader, noise_stream_writer) = noise_stream.into_split();
         let status_sender = StatusSender::Downstream {
             downstream_id,
@@ -125,21 +136,58 @@ impl Downstream {
             downstream_sender: outbound_tx,
             downstream_receiver: inbound_rx,
         };
+
+        let channel_id_factory = AtomicU32::new(0);
+        let group_channel_id = channel_id_factory.fetch_add(1, Ordering::SeqCst);
+        let mut group_channel = match GroupChannel::new_for_job_declaration_client(
+            group_channel_id,
+            DefaultJobStore::new(),
+            full_extranonce_size,
+            pool_tag_string.clone(),
+            miner_tag_string.clone(),
+        ) {
+            Ok(channel) => channel,
+            Err(e) => {
+                error!(?e, "Failed to create group channel");
+                return Err(JDCError::FailedToCreateGroupChannel(e));
+            }
+        };
+
+        coinbase_outputs[0].value =
+            Amount::from_sat(last_future_template.coinbase_tx_value_remaining);
+
+        match group_channel.on_new_template(last_future_template, coinbase_outputs.clone()) {
+            Ok(()) => {}
+            Err(e) => {
+                error!(?e, "Failed to add template to group channel");
+                return Err(JDCError::FailedToCreateGroupChannel(e));
+            }
+        }
+
+        match group_channel.on_set_new_prev_hash(last_new_prev_hash) {
+            Ok(()) => {}
+            Err(e) => {
+                error!(?e, "Failed to set new prevhash for group channel");
+                return Err(JDCError::FailedToCreateGroupChannel(e));
+            }
+        }
+
         let downstream_data = Arc::new(Mutex::new(DownstreamData {
             require_std_job: false,
             extended_channels: HashMap::new(),
             standard_channels: HashMap::new(),
-            group_channels: None,
-            channel_id_factory: AtomicU32::new(0),
+            group_channel,
+            channel_id_factory,
             negotiated_extensions: vec![],
             supported_extensions,
             required_extensions,
         }));
-        Downstream {
+
+        Ok(Downstream {
             downstream_channel,
             downstream_data,
             downstream_id,
-        }
+        })
     }
 
     /// Starts the downstream loop.

@@ -133,6 +133,14 @@ pub enum JDCError {
     FailedToCreateBitcoinCoreTokioRuntime,
     /// Failed to send CoinbaseOutputConstraints message
     FailedToSendCoinbaseOutputConstraints,
+    /// Failed to process NewTemplate message
+    FailedToProcessNewTemplate,
+    /// Failed to process SetNewPrevHash message
+    FailedToProcessSetNewPrevHash,
+    /// Job not found
+    JobNotFound,
+    /// Failed to add channel id to group channel
+    FailedToAddChannelIdToGroupChannel(GroupChannelError),
 }
 
 impl std::error::Error for JDCError {}
@@ -258,6 +266,18 @@ impl fmt::Display for JDCError {
             }
             FailedToSendCoinbaseOutputConstraints => {
                 write!(f, "Failed to send CoinbaseOutputConstraints message")
+            }
+            FailedToProcessNewTemplate => {
+                write!(f, "Failed to process NewTemplate message")
+            }
+            FailedToProcessSetNewPrevHash => {
+                write!(f, "Failed to process SetNewPrevHash message")
+            }
+            JobNotFound => {
+                write!(f, "Job not found")
+            }
+            FailedToAddChannelIdToGroupChannel(ref e) => {
+                write!(f, "Failed to add channel id to group channel: {e:?}")
             }
         }
     }

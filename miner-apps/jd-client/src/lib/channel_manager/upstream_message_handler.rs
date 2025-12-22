@@ -246,6 +246,25 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                 }
             }
 
+            self.channel_manager_data.super_safe_lock(|data| {
+                let upstream_channel = data
+                    .upstream_channel
+                    .as_mut()
+                    .expect("Upstream channel should be present");
+                let full_extranonce_size = upstream_channel.get_full_extranonce_size();
+
+                // set the full extranonce size for the group channel of all downstream clients
+                for (_downstream_id, downstream) in data.downstream.iter_mut() {
+                    downstream
+                        .downstream_data
+                        .super_safe_lock(|downstream_data| {
+                            downstream_data
+                                .group_channel
+                                .set_full_extranonce_size(full_extranonce_size);
+                        });
+                }
+            });
+
             let pending_downstreams = self
                 .channel_manager_data
                 .super_safe_lock(|data| std::mem::take(&mut data.pending_downstream_requests));
