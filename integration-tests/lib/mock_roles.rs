@@ -9,18 +9,15 @@ use stratum_apps::stratum_core::{
     codec_sv2::StandardEitherFrame, framing_sv2::framing::Sv2Frame, parsers_sv2::AnyMessage,
 };
 use tokio::net::TcpStream;
+use tracing::info;
 
 pub struct MockDownstream {
     upstream_address: SocketAddr,
-    messages_from_upstream: MessagesAggregator,
 }
 
 impl MockDownstream {
     pub fn new(upstream_address: SocketAddr) -> Self {
-        Self {
-            upstream_address,
-            messages_from_upstream: MessagesAggregator::new(),
-        }
+        Self { upstream_address }
     }
 
     pub async fn start(&self) -> Sender<MessageFrame> {
@@ -35,18 +32,16 @@ impl MockDownstream {
         })
         .await
         .expect("Failed to create upstream");
-        let messages_from_upstream = self.messages_from_upstream.clone();
         tokio::spawn(async move {
             while let Ok(mut frame) = upstream_receiver.recv().await {
                 let (msg_type, msg) = message_from_frame(&mut frame);
-                messages_from_upstream.add_message(msg_type, msg);
+                info!(
+                    "MockDownstream: received message from upstream: {} {}",
+                    msg_type, msg
+                );
             }
         });
         upstream_sender
-    }
-
-    pub fn next_message_from_upstream(&self) -> Option<(MsgType, AnyMessage<'static>)> {
-        self.messages_from_upstream.next_message()
     }
 }
 
@@ -107,7 +102,10 @@ impl MockUpstream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{start_template_provider, template_provider::DifficultyLevel};
+    use crate::{
+        interceptor::MessageDirection, start_sniffer, start_template_provider,
+        template_provider::DifficultyLevel,
+    };
     use std::{convert::TryInto, net::TcpListener};
     use stratum_apps::stratum_core::{
         codec_sv2::StandardEitherFrame,
@@ -119,7 +117,8 @@ mod tests {
     #[tokio::test]
     async fn test_mock_downstream() {
         let (_tp, socket) = start_template_provider(None, DifficultyLevel::Low);
-        let mock_downstream = MockDownstream::new(socket);
+        let (sniffer, sniffer_addr) = start_sniffer("", socket, false, vec![], None);
+        let mock_downstream = MockDownstream::new(sniffer_addr);
         let send_to_upstream = mock_downstream.start().await;
         let setup_connection =
             AnyMessage::Common(CommonMessages::SetupConnection(SetupConnection {
@@ -139,9 +138,12 @@ mod tests {
                 .expect("Failed to create the frame"),
         );
         send_to_upstream.send(message).await.unwrap();
-        mock_downstream
-            .messages_from_upstream
-            .has_message_type(MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS);
+        sniffer
+            .wait_for_message_type(
+                MessageDirection::ToDownstream,
+                MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+            )
+            .await;
     }
 
     #[tokio::test]
@@ -152,7 +154,8 @@ mod tests {
             .unwrap()
             .port();
         let upstream_socket_addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let mock_downstream = MockDownstream::new(upstream_socket_addr);
+        let (sniffer, sniffer_addr) = start_sniffer("", upstream_socket_addr, false, vec![], None);
+        let mock_downstream = MockDownstream::new(sniffer_addr);
         let upon_receiving_setup_connection = MESSAGE_TYPE_SETUP_CONNECTION;
         let respond_with_success = AnyMessage::Common(CommonMessages::SetupConnectionSuccess(
             SetupConnectionSuccess {
@@ -184,8 +187,11 @@ mod tests {
                 .expect("Failed to create the frame"),
         );
         send_to_upstream.send(message).await.unwrap();
-        mock_downstream
-            .messages_from_upstream
-            .has_message_type(MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS);
+        sniffer
+            .wait_for_message_type(
+                MessageDirection::ToDownstream,
+                MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+            )
+            .await;
     }
 }
