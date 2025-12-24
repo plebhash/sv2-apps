@@ -1,12 +1,9 @@
 use crate::{
-    types::{MessageFrame, MsgType},
+    types::MessageFrame,
     utils::{create_downstream, create_upstream, message_from_frame, wait_for_client},
 };
 use async_channel::Sender;
 use std::net::SocketAddr;
-use stratum_apps::stratum_core::{
-    codec_sv2::StandardEitherFrame, framing_sv2::framing::Sv2Frame, parsers_sv2::AnyMessage,
-};
 use tokio::net::TcpStream;
 use tracing::info;
 
@@ -46,50 +43,46 @@ impl MockDownstream {
 
 pub struct MockUpstream {
     listening_address: SocketAddr,
-    // First item in tuple refer to the message(MsgType) received and second to what
-    // response(AnyMessage) should the upstream send back.
-    response_messages: Vec<(MsgType, AnyMessage<'static>)>,
 }
 
 impl MockUpstream {
-    pub fn new(
-        listening_address: SocketAddr,
-        response_messages: Vec<(MsgType, AnyMessage<'static>)>,
-    ) -> Self {
-        Self {
-            listening_address,
-            response_messages,
-        }
+    pub fn new(listening_address: SocketAddr) -> Self {
+        Self { listening_address }
     }
 
-    pub async fn start(&self) {
+    pub async fn start(&self) -> Sender<MessageFrame> {
         let listening_address = self.listening_address;
-        let response_messages = self.response_messages.clone();
+
+        // Create proxy channel - return this immediately
+        let (proxy_sender, proxy_receiver) = async_channel::unbounded::<MessageFrame>();
+
         tokio::spawn(async move {
+            // Wait for client connection in background
             let (downstream_receiver, downstream_sender) =
                 create_downstream(wait_for_client(listening_address).await)
                     .await
                     .expect("Failed to connect to downstream");
-            while let Ok(mut frame) = downstream_receiver.recv().await {
-                let (msg_type, msg) = message_from_frame(&mut frame);
-                info!(
-                    "MockUpstream: received message from downstream: {} {}",
-                    msg_type, msg
-                );
-                // find a response if the user provided one
-                let response = response_messages
-                    .iter()
-                    .find(|(m_type, _)| m_type == &msg_type);
-                // send response back to the downstream if found
-                if let Some((_, response_msg)) = response {
-                    let message = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
-                        Sv2Frame::from_message(response_msg.clone(), msg_type, 0, false)
-                            .expect("Failed to create the frame"),
+
+            // Spawn task to receive from downstream
+            tokio::spawn(async move {
+                while let Ok(mut frame) = downstream_receiver.recv().await {
+                    let (msg_type, msg) = message_from_frame(&mut frame);
+                    info!(
+                        "MockUpstream: received message from downstream: {} {}",
+                        msg_type, msg
                     );
-                    downstream_sender.send(message).await.unwrap();
+                }
+            });
+
+            // Forward messages from proxy to actual downstream
+            while let Ok(frame) = proxy_receiver.recv().await {
+                if downstream_sender.send(frame).await.is_err() {
+                    break;
                 }
             }
         });
+
+        proxy_sender
     }
 }
 
@@ -101,11 +94,13 @@ mod tests {
         template_provider::DifficultyLevel,
     };
     use std::{convert::TryInto, net::TcpListener};
-    use stratum_apps::stratum_core::{
-        codec_sv2::StandardEitherFrame,
-        common_messages_sv2::{Protocol, SetupConnection, SetupConnectionSuccess, *},
-        framing_sv2::framing::Sv2Frame,
-        parsers_sv2::CommonMessages,
+    use stratum_apps::{
+        stratum_core::{
+            codec_sv2::StandardEitherFrame,
+            common_messages_sv2::{Protocol, SetupConnection, SetupConnectionSuccess, *},
+            parsers_sv2::{AnyMessage, CommonMessages},
+        },
+        utils::types::Sv2Frame,
     };
 
     #[tokio::test]
@@ -150,18 +145,8 @@ mod tests {
         let upstream_socket_addr = SocketAddr::from(([127, 0, 0, 1], port));
         let (sniffer, sniffer_addr) = start_sniffer("", upstream_socket_addr, false, vec![], None);
         let mock_downstream = MockDownstream::new(sniffer_addr);
-        let upon_receiving_setup_connection = MESSAGE_TYPE_SETUP_CONNECTION;
-        let respond_with_success = AnyMessage::Common(CommonMessages::SetupConnectionSuccess(
-            SetupConnectionSuccess {
-                used_version: 2,
-                flags: 0,
-            },
-        ));
-        let mock_upstream = MockUpstream::new(
-            upstream_socket_addr,
-            vec![(upon_receiving_setup_connection, respond_with_success)],
-        );
-        mock_upstream.start().await;
+        let mock_upstream = MockUpstream::new(upstream_socket_addr);
+        let send_to_downstream = mock_upstream.start().await;
         let send_to_upstream = mock_downstream.start().await;
         let setup_connection =
             AnyMessage::Common(CommonMessages::SetupConnection(SetupConnection {
@@ -181,6 +166,22 @@ mod tests {
                 .expect("Failed to create the frame"),
         );
         send_to_upstream.send(message).await.unwrap();
+
+        let success_message = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
+            Sv2Frame::from_message(
+                AnyMessage::Common(CommonMessages::SetupConnectionSuccess(
+                    SetupConnectionSuccess {
+                        used_version: 2,
+                        flags: 0,
+                    },
+                )),
+                MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+                0,
+                false,
+            )
+            .expect("Failed to create the frame"),
+        );
+        send_to_downstream.send(success_message).await.unwrap();
         sniffer
             .wait_for_message_type(
                 MessageDirection::ToDownstream,
