@@ -1,9 +1,13 @@
-use crate::{
-    types::MessageFrame,
-    utils::{create_downstream, create_upstream, message_from_frame, wait_for_client},
-};
+use crate::utils::{create_downstream, create_upstream, message_from_frame, wait_for_client};
 use async_channel::Sender;
 use std::net::SocketAddr;
+use stratum_apps::{
+    stratum_core::{
+        codec_sv2::StandardEitherFrame,
+        parsers_sv2::{AnyMessage, IsSv2Message},
+    },
+    utils::types::Sv2Frame,
+};
 use tokio::net::TcpStream;
 use tracing::info;
 
@@ -16,8 +20,12 @@ impl MockDownstream {
         Self { upstream_address }
     }
 
-    pub async fn start(&self) -> Sender<MessageFrame> {
+    pub async fn start(&self) -> Sender<AnyMessage<'static>> {
         let upstream_address = self.upstream_address;
+
+        // Create proxy channel that accepts AnyMessage
+        let (proxy_sender, proxy_receiver) = async_channel::unbounded::<AnyMessage<'static>>();
+
         let (upstream_receiver, upstream_sender) = create_upstream(loop {
             match TcpStream::connect(upstream_address).await {
                 Ok(stream) => break stream,
@@ -28,6 +36,8 @@ impl MockDownstream {
         })
         .await
         .expect("Failed to create upstream");
+
+        // Spawn task to receive from upstream
         tokio::spawn(async move {
             while let Ok(mut frame) = upstream_receiver.recv().await {
                 let (msg_type, msg) = message_from_frame(&mut frame);
@@ -37,7 +47,22 @@ impl MockDownstream {
                 );
             }
         });
-        upstream_sender
+
+        // Spawn task to convert AnyMessage to MessageFrame and forward to upstream
+        tokio::spawn(async move {
+            while let Ok(message) = proxy_receiver.recv().await {
+                let message_type = message.message_type();
+                let frame = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
+                    Sv2Frame::from_message(message, message_type, 0, false)
+                        .expect("Failed to create frame from message"),
+                );
+                if upstream_sender.send(frame).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        proxy_sender
     }
 }
 
@@ -50,11 +75,11 @@ impl MockUpstream {
         Self { listening_address }
     }
 
-    pub async fn start(&self) -> Sender<MessageFrame> {
+    pub async fn start(&self) -> Sender<AnyMessage<'static>> {
         let listening_address = self.listening_address;
 
-        // Create proxy channel - return this immediately
-        let (proxy_sender, proxy_receiver) = async_channel::unbounded::<MessageFrame>();
+        // Create proxy channel that accepts AnyMessage
+        let (proxy_sender, proxy_receiver) = async_channel::unbounded::<AnyMessage<'static>>();
 
         tokio::spawn(async move {
             // Wait for client connection in background
@@ -74,8 +99,13 @@ impl MockUpstream {
                 }
             });
 
-            // Forward messages from proxy to actual downstream
-            while let Ok(frame) = proxy_receiver.recv().await {
+            // Convert AnyMessage to MessageFrame and forward to downstream
+            while let Ok(message) = proxy_receiver.recv().await {
+                let message_type = message.message_type();
+                let frame = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
+                    Sv2Frame::from_message(message, message_type, 0, false)
+                        .expect("Failed to create frame from message"),
+                );
                 if downstream_sender.send(frame).await.is_err() {
                     break;
                 }
@@ -94,13 +124,12 @@ mod tests {
         template_provider::DifficultyLevel,
     };
     use std::{convert::TryInto, net::TcpListener};
-    use stratum_apps::{
-        stratum_core::{
-            codec_sv2::StandardEitherFrame,
-            common_messages_sv2::{Protocol, SetupConnection, SetupConnectionSuccess, *},
-            parsers_sv2::{AnyMessage, CommonMessages},
+    use stratum_apps::stratum_core::{
+        common_messages_sv2::{
+            Protocol, SetupConnection, SetupConnectionSuccess,
+            MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
         },
-        utils::types::Sv2Frame,
+        parsers_sv2::{AnyMessage, CommonMessages},
     };
 
     #[tokio::test]
@@ -122,11 +151,7 @@ mod tests {
                 firmware: b"abcX".to_vec().try_into().unwrap(),
                 device_id: b"89567".to_vec().try_into().unwrap(),
             }));
-        let message = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
-            Sv2Frame::from_message(setup_connection, MESSAGE_TYPE_SETUP_CONNECTION, 0, false)
-                .expect("Failed to create the frame"),
-        );
-        send_to_upstream.send(message).await.unwrap();
+        send_to_upstream.send(setup_connection).await.unwrap();
         sniffer
             .wait_for_message_type(
                 MessageDirection::ToDownstream,
@@ -161,26 +186,14 @@ mod tests {
                 firmware: b"abcX".to_vec().try_into().unwrap(),
                 device_id: b"89567".to_vec().try_into().unwrap(),
             }));
-        let message = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
-            Sv2Frame::from_message(setup_connection, MESSAGE_TYPE_SETUP_CONNECTION, 0, false)
-                .expect("Failed to create the frame"),
-        );
-        send_to_upstream.send(message).await.unwrap();
+        send_to_upstream.send(setup_connection).await.unwrap();
 
-        let success_message = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
-            Sv2Frame::from_message(
-                AnyMessage::Common(CommonMessages::SetupConnectionSuccess(
-                    SetupConnectionSuccess {
-                        used_version: 2,
-                        flags: 0,
-                    },
-                )),
-                MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
-                0,
-                false,
-            )
-            .expect("Failed to create the frame"),
-        );
+        let success_message = AnyMessage::Common(CommonMessages::SetupConnectionSuccess(
+            SetupConnectionSuccess {
+                used_version: 2,
+                flags: 0,
+            },
+        ));
         send_to_downstream.send(success_message).await.unwrap();
         sniffer
             .wait_for_message_type(
