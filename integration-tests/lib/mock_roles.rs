@@ -1,5 +1,4 @@
 use crate::{
-    message_aggregator::MessagesAggregator,
     types::{MessageFrame, MsgType},
     utils::{create_downstream, create_upstream, message_from_frame, wait_for_client},
 };
@@ -47,7 +46,6 @@ impl MockDownstream {
 
 pub struct MockUpstream {
     listening_address: SocketAddr,
-    messages_from_dowsntream: MessagesAggregator,
     // First item in tuple refer to the message(MsgType) received and second to what
     // response(AnyMessage) should the upstream send back.
     response_messages: Vec<(MsgType, AnyMessage<'static>)>,
@@ -60,14 +58,12 @@ impl MockUpstream {
     ) -> Self {
         Self {
             listening_address,
-            messages_from_dowsntream: MessagesAggregator::new(),
             response_messages,
         }
     }
 
     pub async fn start(&self) {
         let listening_address = self.listening_address;
-        let messages_from_dowsntream = self.messages_from_dowsntream.clone();
         let response_messages = self.response_messages.clone();
         tokio::spawn(async move {
             let (downstream_receiver, downstream_sender) =
@@ -76,8 +72,10 @@ impl MockUpstream {
                     .expect("Failed to connect to downstream");
             while let Ok(mut frame) = downstream_receiver.recv().await {
                 let (msg_type, msg) = message_from_frame(&mut frame);
-                // save messages received from downstream
-                messages_from_dowsntream.add_message(msg_type, msg);
+                info!(
+                    "MockUpstream: received message from downstream: {} {}",
+                    msg_type, msg
+                );
                 // find a response if the user provided one
                 let response = response_messages
                     .iter()
@@ -92,10 +90,6 @@ impl MockUpstream {
                 }
             }
         });
-    }
-
-    pub fn next_message_from_downstream(&self) -> Option<(MsgType, AnyMessage<'static>)> {
-        self.messages_from_dowsntream.next_message()
     }
 }
 
