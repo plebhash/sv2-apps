@@ -119,60 +119,33 @@ impl MockUpstream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        interceptor::MessageDirection, start_sniffer, start_template_provider,
-        template_provider::DifficultyLevel,
-    };
+    use crate::{interceptor::MessageDirection, start_sniffer};
     use std::{convert::TryInto, net::TcpListener};
     use stratum_apps::stratum_core::{
         common_messages_sv2::{
-            Protocol, SetupConnection, SetupConnectionSuccess,
+            Protocol, SetupConnection, SetupConnectionSuccess, MESSAGE_TYPE_SETUP_CONNECTION,
             MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
         },
         parsers_sv2::{AnyMessage, CommonMessages},
     };
 
     #[tokio::test]
-    async fn test_mock_downstream() {
-        let (_tp, socket) = start_template_provider(None, DifficultyLevel::Low);
-        let (sniffer, sniffer_addr) = start_sniffer("", socket, false, vec![], None);
-        let mock_downstream = MockDownstream::new(sniffer_addr);
-        let send_to_upstream = mock_downstream.start().await;
-        let setup_connection =
-            AnyMessage::Common(CommonMessages::SetupConnection(SetupConnection {
-                protocol: Protocol::TemplateDistributionProtocol,
-                min_version: 2,
-                max_version: 2,
-                flags: 0,
-                endpoint_host: b"0.0.0.0".to_vec().try_into().unwrap(),
-                endpoint_port: 8081,
-                vendor: b"Bitmain".to_vec().try_into().unwrap(),
-                hardware_version: b"901".to_vec().try_into().unwrap(),
-                firmware: b"abcX".to_vec().try_into().unwrap(),
-                device_id: b"89567".to_vec().try_into().unwrap(),
-            }));
-        send_to_upstream.send(setup_connection).await.unwrap();
-        sniffer
-            .wait_for_message_type(
-                MessageDirection::ToDownstream,
-                MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
-            )
-            .await;
-    }
-
-    #[tokio::test]
-    async fn test_mock_upstream() {
+    async fn test_mock_roles() {
         let port = TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
             .unwrap()
             .port();
         let upstream_socket_addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let (sniffer, sniffer_addr) = start_sniffer("", upstream_socket_addr, false, vec![], None);
-        let mock_downstream = MockDownstream::new(sniffer_addr);
+
         let mock_upstream = MockUpstream::new(upstream_socket_addr);
         let send_to_downstream = mock_upstream.start().await;
+
+        let (sniffer, sniffer_addr) = start_sniffer("", upstream_socket_addr, false, vec![], None);
+        let mock_downstream = MockDownstream::new(sniffer_addr);
+
         let send_to_upstream = mock_downstream.start().await;
+
         let setup_connection =
             AnyMessage::Common(CommonMessages::SetupConnection(SetupConnection {
                 protocol: Protocol::TemplateDistributionProtocol,
@@ -187,6 +160,10 @@ mod tests {
                 device_id: b"89567".to_vec().try_into().unwrap(),
             }));
         send_to_upstream.send(setup_connection).await.unwrap();
+
+        sniffer
+            .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+            .await;
 
         let success_message = AnyMessage::Common(CommonMessages::SetupConnectionSuccess(
             SetupConnectionSuccess {
@@ -195,6 +172,7 @@ mod tests {
             },
         ));
         send_to_downstream.send(success_message).await.unwrap();
+
         sniffer
             .wait_for_message_type(
                 MessageDirection::ToDownstream,
