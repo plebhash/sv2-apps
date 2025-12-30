@@ -208,26 +208,36 @@ impl MessagesAggregatorSV1 {
 
     async fn has_message(&self, expected_msg: &[&str]) -> bool {
         let messages = self.messages.lock().await;
-        let ret = messages.iter().any(|msg| match msg {
-            sv1_api::Message::StandardRequest(req) => req.method == *expected_msg.first().unwrap(),
-            sv1_api::Message::Notification(notif) => notif.method == *expected_msg.first().unwrap(),
+        let target = match expected_msg.first() {
+            Some(t) => t,
+            None => return false,
+        };
+
+        messages.iter().any(|msg| match msg {
+            sv1_api::Message::StandardRequest(req) => req.method == *target,
+            sv1_api::Message::Notification(notif) => notif.method == *target,
             sv1_api::Message::OkResponse(res) => {
-                if let Ok(res) = corepc_node::serde_json::to_string(&res) {
-                    for m in expected_msg {
-                        if !res.contains(m) {
-                            return false;
-                        }
-                    }
+                let id_match = res.id.to_string() == *target;
+
+                if id_match {
                     true
+                } else if let Ok(serialized) = corepc_node::serde_json::to_string(&res) {
+                    expected_msg.iter().all(|m| serialized.contains(m))
                 } else {
                     false
                 }
             }
             sv1_api::Message::ErrorResponse(res) => {
-                res.error.clone().unwrap().message == *expected_msg.first().unwrap()
+                let id_match = res.id.to_string() == *target;
+                let error_msg_match = res
+                    .error
+                    .as_ref()
+                    .map(|e| e.message.contains(*target))
+                    .unwrap_or(false);
+
+                id_match || error_msg_match
             }
-        });
-        ret
+        })
     }
 
     /// Checks if there's a keepalive mining.notify message.
