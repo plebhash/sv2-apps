@@ -13,6 +13,7 @@ use stratum_apps::{
 };
 use tracing::info;
 
+#[hotpath::measure_all]
 impl HandleCommonMessagesFromClientAsync for Downstream {
     type Error = JDCError;
 

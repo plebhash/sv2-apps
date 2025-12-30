@@ -10,6 +10,7 @@ use stratum_apps::{
 };
 use tracing::{error, info};
 
+#[hotpath::measure_all]
 impl HandleExtensionsFromServerAsync for ChannelManager {
     type Error = JDCError;
 

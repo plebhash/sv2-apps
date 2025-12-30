@@ -253,6 +253,7 @@ pub struct ChannelManager {
     pub upstream_state: AtomicUpstreamState,
 }
 
+#[hotpath::measure_all]
 impl ChannelManager {
     /// Constructor method used to instantiate the Channel Manager
     #[allow(clippy::too_many_arguments)]

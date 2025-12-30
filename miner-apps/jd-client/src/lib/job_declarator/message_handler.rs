@@ -13,6 +13,7 @@ use crate::{
     job_declarator::JobDeclarator,
 };
 
+#[hotpath::measure_all]
 impl HandleCommonMessagesFromServerAsync for JobDeclarator {
     type Error = JDCError;
 

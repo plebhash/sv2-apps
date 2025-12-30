@@ -46,6 +46,7 @@ pub struct JobDeclaratorClient {
     notify_shutdown: broadcast::Sender<ShutdownMessage>,
 }
 
+#[hotpath::measure_all]
 impl JobDeclaratorClient {
     /// Creates a new [`JobDeclaratorClient`] instance.
     pub fn new(config: JobDeclaratorClientConfig) -> Self {
@@ -479,6 +480,7 @@ impl JobDeclaratorClient {
 
 // Attempts to initialize a single upstream (pool + JDS pair).
 #[allow(clippy::too_many_arguments)]
+#[hotpath::measure]
 async fn try_initialize_single(
     upstream_addr: &(SocketAddr, SocketAddr, Secp256k1PublicKey, bool),
     upstream_to_channel_manager_sender: Sender<Sv2Frame>,

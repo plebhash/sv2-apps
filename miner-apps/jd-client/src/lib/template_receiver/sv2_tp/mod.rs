@@ -79,6 +79,7 @@ pub struct Sv2Tp {
     tp_address: String,
 }
 
+#[hotpath::measure_all]
 impl Sv2Tp {
     /// Establish a new connection to a Template Provider.
     ///

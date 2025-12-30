@@ -1173,6 +1173,7 @@ dependencies = [
  "bitcoin_core_sv2",
  "clap",
  "config",
+ "hotpath",
  "serde",
  "stratum-apps",
  "tokio",

@@ -60,6 +60,7 @@ pub struct JobDeclarator {
     mode: ConfigJDCMode,
 }
 
+#[hotpath::measure_all]
 impl JobDeclarator {
     /// Creates a new JobDeclarator instance by connecting and performing a Noise handshake.
     ///

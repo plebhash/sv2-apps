@@ -18,6 +18,7 @@ use crate::{
     jd_mode::{get_jd_mode, JdMode},
 };
 
+#[hotpath::measure_all]
 impl HandleTemplateDistributionMessagesFromServerAsync for ChannelManager {
     type Error = JDCError;
 

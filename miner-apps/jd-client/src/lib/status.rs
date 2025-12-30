@@ -61,6 +61,7 @@ impl From<&StatusSender> for StatusType {
 
 impl StatusSender {
     /// Sends a status update for the associated component.
+    #[hotpath::measure_all]
     pub async fn send(&self, status: Status) -> Result<(), async_channel::SendError<Status>> {
         match self {
             Self::Downstream { downstream_id, tx } => {
@@ -116,6 +117,7 @@ pub struct Status {
 }
 
 /// Sends a shutdown status for the given component, logging the error cause.
+#[hotpath::measure]
 async fn send_status(sender: &StatusSender, error: JDCError) {
     let state = match sender {
         StatusSender::Downstream { downstream_id, .. } => {
@@ -149,6 +151,7 @@ async fn send_status(sender: &StatusSender, error: JDCError) {
 }
 
 /// Logs an error and propagates a corresponding shutdown status for the component.
+#[hotpath::measure]
 pub async fn handle_error(sender: &StatusSender, e: JDCError) {
     error!("Error in {:?}: {:?}", sender, e);
     send_status(sender, e).await;

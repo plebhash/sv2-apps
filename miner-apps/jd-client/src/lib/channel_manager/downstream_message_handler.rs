@@ -85,6 +85,7 @@ impl<'a> From<(usize, Mining<'a>)> for RouteMessageTo<'a> {
     }
 }
 
+#[hotpath::measure_all]
 impl RouteMessageTo<'_> {
     /// Forwards the message to its corresponding destination channel.
     ///
@@ -135,6 +136,7 @@ impl RouteMessageTo<'_> {
     }
 }
 
+#[hotpath::measure_all]
 impl HandleMiningMessagesFromClientAsync for ChannelManager {
     type Error = JDCError;
 

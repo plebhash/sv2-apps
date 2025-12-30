@@ -9,6 +9,7 @@ use tracing::{info, warn};
 
 use crate::{error::JDCError, upstream::Upstream};
 
+#[hotpath::measure_all]
 impl HandleCommonMessagesFromServerAsync for Upstream {
     type Error = JDCError;
 
