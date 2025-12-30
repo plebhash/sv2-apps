@@ -155,6 +155,45 @@ impl SnifferSV1 {
         );
     }
 
+    /// Waits for a message and executes an assertion closure on it.
+    pub async fn wait_and_assert<F>(
+        &self,
+        filter: SV1MessageFilter,
+        direction: &MessageDirection,
+        mut assertion: F,
+    ) where
+        F: FnMut(sv1_api::Message),
+    {
+        let f = filter.inner();
+        self.wait_for_message(&[&f], direction).await;
+
+        let aggregator = match direction {
+            MessageDirection::ToUpstream => &self.messages_from_downstream,
+            MessageDirection::ToDownstream => &self.messages_from_upstream,
+        };
+
+        let message = match filter {
+            SV1MessageFilter::WithMessageName(method_name) => aggregator
+                .get_last_matching(|msg| match msg {
+                    sv1_api::Message::StandardRequest(req) => req.method == method_name,
+                    sv1_api::Message::Notification(notif) => notif.method == method_name,
+                    _ => false,
+                })
+                .await
+                .expect("Message disappeared after wait_for_message"),
+            SV1MessageFilter::WithMessageId(method_id) => aggregator
+                .get_last_matching(|msg| match msg {
+                    sv1_api::Message::StandardRequest(req) => req.id == method_id,
+                    sv1_api::Message::OkResponse(req) => req.id == method_id,
+                    sv1_api::Message::ErrorResponse(req) => req.id == method_id,
+                    _ => false,
+                })
+                .await
+                .expect("Message disappeared after wait_for_message"),
+        };
+        assertion(message);
+    }
+
     async fn recv_from_up_send_to_down_sv1(
         recv: Receiver<sv1_api::Message>,
         send: Sender<sv1_api::Message>,
@@ -183,6 +222,25 @@ impl SnifferSV1 {
             tracing::debug!("🔍 Sv1 Sniffer | Direction: ⬆ | Forwarded: {}", msg);
         }
         Err(SnifferError::DownstreamClosed)
+    }
+}
+
+/// Represents a filter by which it is possbile to get a message using
+/// [`SnifferSV1::wait_and_assert`]
+///
+/// For `WithMessageName` you can pass method name like `mining.subscribe`, And for `WithMessageId`
+/// you can pass the id of the message you are interested in filtering.
+pub enum SV1MessageFilter {
+    WithMessageName(&'static str),
+    WithMessageId(u64),
+}
+
+impl SV1MessageFilter {
+    fn inner(&self) -> String {
+        match self {
+            SV1MessageFilter::WithMessageName(mn) => mn.to_string(),
+            SV1MessageFilter::WithMessageId(mi) => mi.to_string(),
+        }
     }
 }
 
