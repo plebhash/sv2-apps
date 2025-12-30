@@ -255,4 +255,12 @@ impl MessagesAggregatorSV1 {
             false
         })
     }
+    // Finds the last message that matches a predicate and returns it.
+    async fn get_last_matching<F>(&self, predicate: F) -> Option<sv1_api::Message>
+    where
+        F: Fn(&sv1_api::Message) -> bool,
+    {
+        let messages = self.messages.lock().await;
+        messages.iter().rev().find(|m| predicate(m)).cloned()
+    }
 }
