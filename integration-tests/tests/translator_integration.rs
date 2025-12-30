@@ -263,7 +263,7 @@ async fn test_translator_keepalive_job_sent_and_share_received_by_pool() {
     let (_minerd_process, _minerd_addr) = start_minerd(sv1_sniffer_addr, None, None, false).await;
 
     sv1_sniffer
-        .wait_for_message(&["mining.notify"], MessageDirection::ToDownstream)
+        .wait_for_message(&["mining.notify"], &MessageDirection::ToDownstream)
         .await;
 
     pool_translator_sniffer

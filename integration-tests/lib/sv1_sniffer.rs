@@ -87,7 +87,7 @@ impl SnifferSV1 {
     }
 
     /// Wait for a specific message to be received from the downstream role.
-    pub async fn wait_for_message(&self, message: &[&str], direction: MessageDirection) {
+    pub async fn wait_for_message(&self, message: &[&str], direction: &MessageDirection) {
         if message.is_empty() {
             panic!("Message cannot be empty");
         }
