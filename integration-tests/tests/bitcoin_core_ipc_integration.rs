@@ -3,7 +3,7 @@ use integration_tests_sv2::{
     template_provider::DifficultyLevel,
     *,
 };
-use stratum_apps::stratum_core::{common_messages_sv2::*, job_declaration_sv2::*};
+use stratum_apps::stratum_core::{common_messages_sv2::*, job_declaration_sv2::*, parsers_sv2::{AnyMessage, Mining}};
 
 // Pool propagates block via IPC
 #[tokio::test]
@@ -103,4 +103,43 @@ async fn jdc_propagates_block_with_bitcoin_core_ipc() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn test_33965() {
+    start_tracing();
+    let bitcoin_core = start_bitcoin_core(DifficultyLevel::Low);
+    bitcoin_core.fund_wallet().unwrap();
+    let ipc_socket_path = bitcoin_core.ipc_socket_path().clone();
+    let (_pool, pool_addr) = start_pool(ipc_config(ipc_socket_path), vec![], vec![]).await;
+    let (sniffer, sniffer_addr) = start_sniffer("0", pool_addr, false, vec![], None);
+    let (_translator, tproxy_addr) =
+        start_sv2_translator(&[sniffer_addr], false, vec![], vec![]).await;
+
+    sniffer.wait_for_message_type(MessageDirection::ToDownstream, MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS).await;
+    let (_minerd_process, _minerd_addr) = start_minerd(tproxy_addr, None, None, false).await;
+
+    loop {
+        // create a mempool transaction to trigger a new template with merkle_path.len() > 0
+        bitcoin_core.create_mempool_transaction().unwrap();
+        let new_extended_mining_job = loop {
+            match sniffer.next_message_from_upstream() {
+                Some((_, AnyMessage::Mining(Mining::NewExtendedMiningJob(msg)))) => {
+                    break msg;
+                }
+                _ => {
+                    // allow other tasks to run
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+            }
+        };
+        println!("new_extended_mining_job: {:?}", new_extended_mining_job);
+        let merkle_path = new_extended_mining_job.merkle_path.to_vec();
+
+        // if the merkle path is not empty, the template contains at least one transaction
+        if merkle_path.len() > 0 {
+            break;
+        }
+    };
 }
