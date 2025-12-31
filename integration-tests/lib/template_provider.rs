@@ -150,12 +150,16 @@ impl BitcoinCore {
             }
         }
 
+        // enable to test 33965
+        // let bitcoin_node_bin = PathBuf::from("/Users/plebhash/develop/bitcoin/build/bin/bitcoin-node");
+
         // Add IPC and basic args
         conf.args.extend(vec![
             "-txindex=1",
             "-ipcbind=unix", // Enable IPC for sv2-tp to connect
             "-debug=rpc",
             "-logtimemicros=1",
+            // "-blockreservedweight=4000000", // enable to test 33965
         ]);
 
         // Launch bitcoin-node using corepc-node (which will manage the process for us)
