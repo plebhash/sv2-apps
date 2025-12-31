@@ -626,7 +626,8 @@ impl BitcoinCoreSv2 {
             })?;
 
         let coinbase_weight = (coinbase_output_max_additional_size * WEIGHT_FACTOR) as u64;
-        let block_reserved_weight = coinbase_weight.max(MIN_BLOCK_RESERVED_WEIGHT); // 2000 is the minimum block reserved weight
+        // let block_reserved_weight = coinbase_weight.max(MIN_BLOCK_RESERVED_WEIGHT); // 2000 is the minimum block reserved weight
+        let block_reserved_weight = coinbase_weight;
         tracing::debug!("Setting block_reserved_weight: {block_reserved_weight}");
         template_ipc_client_request_options.set_block_reserved_weight(block_reserved_weight);
         template_ipc_client_request_options.set_coinbase_output_max_additional_sigops(
