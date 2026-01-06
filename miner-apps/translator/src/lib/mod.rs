@@ -96,6 +96,7 @@ impl TranslatorSv2 {
             channel_manager_to_sv1_server_receiver,
             sv1_server_to_channel_manager_sender,
             self.config.clone(),
+            notify_shutdown.clone(),
         ));
 
         info!("Initializing upstream connection...");
@@ -277,7 +278,6 @@ impl TranslatorSv2 {
                         // starting sv1 server instance
                         if let Err(e) = Sv1Server::start(
                             sv1_server_instance,
-                            notify_shutdown.clone(),
                             shutdown_complete_tx.clone(),
                             status_sender.clone(),
                             task_manager.clone(),

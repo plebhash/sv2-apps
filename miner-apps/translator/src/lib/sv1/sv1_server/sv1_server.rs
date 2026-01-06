@@ -66,6 +66,7 @@ pub struct Sv1Server {
     config: TranslatorConfig,
     sequence_counter: AtomicU32,
     miner_counter: AtomicU32,
+    notify_shutdown: broadcast::Sender<ShutdownMessage>,
 }
 
 impl Sv1Server {
@@ -89,6 +90,7 @@ impl Sv1Server {
         channel_manager_receiver: Receiver<(Mining<'static>, Option<Vec<Tlv>>)>,
         channel_manager_sender: Sender<(Mining<'static>, Option<Vec<Tlv>>)>,
         config: TranslatorConfig,
+        notify_shutdown: broadcast::Sender<ShutdownMessage>,
     ) -> Self {
         let shares_per_minute = config.downstream_difficulty_config.shares_per_minute;
         let sv1_server_channel_state =
@@ -102,6 +104,7 @@ impl Sv1Server {
             shares_per_minute,
             miner_counter: AtomicU32::new(0),
             sequence_counter: AtomicU32::new(0),
+            notify_shutdown,
         }
     }
 
@@ -129,13 +132,13 @@ impl Sv1Server {
     /// * `Err(TproxyError)` - Server encountered an error
     pub async fn start(
         self: Arc<Self>,
-        notify_shutdown: broadcast::Sender<ShutdownMessage>,
         shutdown_complete_tx: mpsc::Sender<()>,
         status_sender: Sender<Status>,
         task_manager: Arc<TaskManager>,
     ) -> Result<(), TproxyError> {
         info!("Starting SV1 server on {}", self.listener_addr);
-        let mut shutdown_rx_main = notify_shutdown.subscribe();
+
+        let mut shutdown_rx_main = self.notify_shutdown.subscribe();
 
         // get the first target for the first set difficulty message
         let first_target: Target = hash_rate_to_target(
@@ -260,7 +263,7 @@ impl Sv1Server {
                                 };
                                 Downstream::run_downstream_tasks(
                                     downstream,
-                                    notify_shutdown.clone(),
+                                    self.notify_shutdown.clone(),
                                     shutdown_complete_tx.clone(),
                                     status_sender,
                                     task_manager.clone(),
@@ -593,6 +596,48 @@ impl Sv1Server {
                     // Vardiff disabled - just forward the difficulty to downstreams
                     debug!("Vardiff disabled - forwarding SetTarget to downstreams");
                     self.handle_set_target_without_vardiff(m).await;
+                }
+            }
+
+            Mining::CloseChannel(m) => {
+                debug!("Received CloseChannel for channel id: {}", m.channel_id);
+                // Find all downstream_ids that are using this channel_id
+                let downstream_ids_to_close: Vec<DownstreamId> =
+                    self.sv1_server_data.super_safe_lock(|data| {
+                        data.downstreams
+                            .iter()
+                            .filter_map(|(downstream_id, downstream)| {
+                                let has_channel = downstream
+                                    .downstream_data
+                                    .super_safe_lock(|d| d.channel_id == Some(m.channel_id));
+                                if has_channel {
+                                    Some(*downstream_id)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    });
+
+                // Remove downstreams from the map first, then send shutdown
+                // This prevents the shutdown handler from sending CloseChannel back upstream
+                for downstream_id in &downstream_ids_to_close {
+                    self.sv1_server_data.super_safe_lock(|data| {
+                        if let Some(_downstream) = data.downstreams.remove(downstream_id) {
+                            info!("Downstream: {} disconnected and removed from sv1 server downstreams", downstream_id);
+                        }
+                    });
+                }
+
+                // Send shutdown for each affected downstream
+                for downstream_id in downstream_ids_to_close {
+                    info!(
+                        "Sending CloseChannel message: {} for downstream: {}",
+                        m.channel_id, downstream_id
+                    );
+                    self.notify_shutdown
+                        .send(ShutdownMessage::DownstreamShutdown(downstream_id))
+                        .map_err(|_| TproxyError::ChannelErrorSender)?;
                 }
             }
             // Guaranteed unreachable: the channel manager only forwards valid,

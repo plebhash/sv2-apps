@@ -319,94 +319,124 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
         _tlv_fields: Option<&[Tlv]>,
     ) -> Result<(), Self::Error> {
         info!("Received: {}", m);
-        self.channel_manager_data
-            .safe_lock(|channel_data_manager| {
-                // was the message sent to a group channel?
-                if let Some(group_channel_arc) =
-                    channel_data_manager.group_channels.get(&m.channel_id)
-                {
-                    let group_channel = group_channel_arc.read().map_err(|e| {
-                        error!("Failed to read group channel: {:?}", e);
-                        TproxyError::PoisonLock
-                    })?;
-                    for channel_id in group_channel.get_channel_ids() {
-                        channel_data_manager.extended_channels.remove(channel_id);
-                    }
+        let close_channel_messages_sv1_server =
+            self.channel_manager_data
+                .safe_lock(|channel_data_manager| {
+                    let mut close_channel_messages = Vec::new();
 
-                    // maybe the message was sent to a group channel, which contains the aggregated
-                    // channel
-                    let should_remove_aggregated = if let Some(aggregated_channel) =
-                        channel_data_manager.upstream_extended_channel.as_ref()
+                    // was the message sent to a group channel?
+                    if let Some(group_channel_arc) =
+                        channel_data_manager.group_channels.get(&m.channel_id)
                     {
-                        let aggregated_channel = aggregated_channel.read().map_err(|e| {
-                            error!("Failed to read aggregated channel: {:?}", e);
+                        let group_channel = group_channel_arc.read().map_err(|e| {
+                            error!("Failed to read group channel: {:?}", e);
                             TproxyError::PoisonLock
                         })?;
-                        let aggregated_channel_id = aggregated_channel.get_channel_id();
-                        group_channel
-                            .get_channel_ids()
-                            .contains(&aggregated_channel_id)
-                    } else {
-                        false
-                    };
+                        for channel_id in group_channel.get_channel_ids() {
+                            channel_data_manager.extended_channels.remove(channel_id);
 
-                    // todo: shouldn't this actually trigger fallback?
-                    if should_remove_aggregated {
-                        channel_data_manager.upstream_extended_channel = None;
-                    }
+                            // send a CloseChannel message to the SV1Server for each channel in the
+                            // group channel this will trigger a
+                            // shutdown of the downstreams that are using this channel
+                            close_channel_messages.push(CloseChannel {
+                                channel_id: *channel_id,
+                                reason_code: "".to_string().try_into().unwrap(),
+                            });
+                        }
 
-                    drop(group_channel);
-                    channel_data_manager.group_channels.remove(&m.channel_id);
-                // if the message was not sent to a group channel, we need to check if we're
-                // working in aggregated mode
-                } else if channel_data_manager.mode == ChannelMode::Aggregated {
-                    // todo: shouldn't we simply trigger fallback here?
-                    // regardless of m.channel_id
-                    // see https://github.com/stratum-mining/sv2-apps/issues/140
-                    let should_remove_aggregated = {
-                        let aggregated_channel = channel_data_manager
-                            .upstream_extended_channel
-                            .as_ref()
-                            .expect("aggregated channel should be present")
-                            .read()
-                            .map_err(|e| {
+                        // maybe the message was sent to a group channel, which contains the
+                        // aggregated channel
+                        let should_remove_aggregated = if let Some(aggregated_channel) =
+                            channel_data_manager.upstream_extended_channel.as_ref()
+                        {
+                            let aggregated_channel = aggregated_channel.read().map_err(|e| {
                                 error!("Failed to read aggregated channel: {:?}", e);
                                 TproxyError::PoisonLock
                             })?;
-                        aggregated_channel.get_channel_id() == m.channel_id
-                    };
+                            let aggregated_channel_id = aggregated_channel.get_channel_id();
+                            group_channel
+                                .get_channel_ids()
+                                .contains(&aggregated_channel_id)
+                        } else {
+                            false
+                        };
 
-                    if should_remove_aggregated {
-                        channel_data_manager.upstream_extended_channel = None;
-                    }
-                // if the message was not sent to a group channel, and we're not working in
-                // aggregated mode,
-                } else {
-                    if channel_data_manager
-                        .extended_channels
-                        .contains_key(&m.channel_id)
-                    {
-                        channel_data_manager.extended_channels.remove(&m.channel_id);
+                        // todo: shouldn't this actually trigger fallback?
+                        if should_remove_aggregated {
+                            channel_data_manager.upstream_extended_channel = None;
+                        }
+
+                        drop(group_channel);
+                        channel_data_manager.group_channels.remove(&m.channel_id);
+                    // if the message was not sent to a group channel, we need to check if we're
+                    // working in aggregated mode
+                    } else if channel_data_manager.mode == ChannelMode::Aggregated {
+                        // todo: shouldn't we simply trigger fallback here?
+                        // regardless of m.channel_id
+                        // see https://github.com/stratum-mining/sv2-apps/issues/140
+                        let should_remove_aggregated = {
+                            let aggregated_channel = channel_data_manager
+                                .upstream_extended_channel
+                                .as_ref()
+                                .expect("aggregated channel should be present")
+                                .read()
+                                .map_err(|e| {
+                                    error!("Failed to read aggregated channel: {:?}", e);
+                                    TproxyError::PoisonLock
+                                })?;
+                            aggregated_channel.get_channel_id() == m.channel_id
+                        };
+
+                        if should_remove_aggregated {
+                            channel_data_manager.upstream_extended_channel = None;
+                        }
+                    // if the message was not sent to a group channel, and we're not working in
+                    // aggregated mode,
                     } else {
-                        error!(
-                            "Channel Id not found: {}, ignoring CloseChannel message",
-                            m.channel_id
-                        );
-                        return Ok(());
-                    }
+                        if channel_data_manager
+                            .extended_channels
+                            .contains_key(&m.channel_id)
+                        {
+                            channel_data_manager.extended_channels.remove(&m.channel_id);
 
-                    for group_channel in channel_data_manager.group_channels.values() {
-                        let mut group_channel = group_channel.write().map_err(|e| {
-                            error!("Failed to write group channel: {:?}", e);
-                            TproxyError::PoisonLock
-                        })?;
-                        if group_channel.get_channel_ids().contains(&m.channel_id) {
-                            group_channel.remove_channel_id(m.channel_id);
+                            // send a CloseChannel message to the SV1Server for the channel
+                            // this will trigger a shutdown of the downstream that is using this
+                            // channel
+                            close_channel_messages.push(CloseChannel {
+                                channel_id: m.channel_id,
+                                reason_code: "".to_string().try_into().unwrap(),
+                            });
+                        } else {
+                            error!(
+                                "Channel Id not found: {}, ignoring CloseChannel message",
+                                m.channel_id
+                            );
+                            return Ok(Vec::new());
+                        }
+
+                        for group_channel in channel_data_manager.group_channels.values() {
+                            let mut group_channel = group_channel.write().map_err(|e| {
+                                error!("Failed to write group channel: {:?}", e);
+                                TproxyError::PoisonLock
+                            })?;
+                            if group_channel.get_channel_ids().contains(&m.channel_id) {
+                                group_channel.remove_channel_id(m.channel_id);
+                            }
                         }
                     }
-                }
-                Ok::<(), TproxyError>(())
-            })??;
+                    Ok::<Vec<CloseChannel<'static>>, TproxyError>(close_channel_messages)
+                })??;
+
+        for message in close_channel_messages_sv1_server {
+            self.channel_state
+                .sv1_server_sender
+                .send((Mining::CloseChannel(message), None))
+                .await
+                .map_err(|e| {
+                    error!("Failed to send CloseChannel: {:?}", e);
+                    TproxyError::ChannelErrorSender
+                })?;
+        }
         Ok(())
     }
 
