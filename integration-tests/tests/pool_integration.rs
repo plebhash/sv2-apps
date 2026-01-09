@@ -1,11 +1,15 @@
 // This file contains integration tests for the `PoolSv2` module.
 //
 // `PoolSv2` is a module that implements the Pool role in the Stratum V2 protocol.
-use integration_tests_sv2::{interceptor::MessageDirection, template_provider::DifficultyLevel, *};
+use integration_tests_sv2::{
+    interceptor::{MessageDirection, ReplaceMessage},
+    template_provider::DifficultyLevel,
+    *,
+};
 use stratum_apps::stratum_core::{
     common_messages_sv2::{has_work_selection, Protocol, SetupConnection, *},
     mining_sv2::*,
-    parsers_sv2::{AnyMessage, CommonMessages, Mining, TemplateDistribution},
+    parsers_sv2::{self, AnyMessage, CommonMessages, Mining, TemplateDistribution},
     template_distribution_sv2::*,
 };
 
@@ -338,4 +342,59 @@ async fn pool_does_not_send_jobs_to_jdc() {
             .await,
         "Pool should NOT send non-future NewExtendedMiningJob messages to JDC"
     );
+}
+
+// The test runs pool and translator, with translator sending a SetupConnection message
+// with a wrong protocol, this test asserts whether pool sends SetupConnection error or
+// not to such downstream.
+#[tokio::test]
+async fn pool_reject_setup_connection_with_non_mining_protocol() {
+    start_tracing();
+    let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::Low);
+    let (_pool, pool_addr) = start_pool(sv2_tp_config(tp_addr), vec![], vec![]).await;
+    let endpoint_host = "127.0.0.1".to_string().into_bytes().try_into().unwrap();
+    let vendor = String::new().try_into().unwrap();
+    let hardware_version = String::new().try_into().unwrap();
+    let firmware = String::new().try_into().unwrap();
+    let device_id = String::new().try_into().unwrap();
+
+    let setup_connection_replace = ReplaceMessage::new(
+        MessageDirection::ToUpstream,
+        MESSAGE_TYPE_SETUP_CONNECTION,
+        AnyMessage::Common(parsers_sv2::CommonMessages::SetupConnection(
+            SetupConnection {
+                protocol: Protocol::TemplateDistributionProtocol,
+                min_version: 2,
+                max_version: 2,
+                flags: 0b0000_0000_0000_0000_0000_0000_0000_0000,
+                endpoint_host,
+                endpoint_port: 1212,
+                vendor,
+                hardware_version,
+                firmware,
+                device_id,
+            },
+        )),
+    );
+    let (pool_translator_sniffer, pool_translator_sniffer_addr) = start_sniffer(
+        "0",
+        pool_addr,
+        false,
+        vec![setup_connection_replace.into()],
+        None,
+    );
+    let (_tproxy, _) =
+        start_sv2_translator(&[pool_translator_sniffer_addr], false, vec![], vec![], None).await;
+
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    pool_translator_sniffer
+        .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+        .await;
+    pool_translator_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_SETUP_CONNECTION_ERROR,
+        )
+        .await;
 }

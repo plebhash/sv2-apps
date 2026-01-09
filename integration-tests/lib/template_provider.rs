@@ -125,8 +125,8 @@ impl BitcoinCore {
                     let download_endpoint = env::var("BITCOIN_CORE_DOWNLOAD_ENDPOINT")
                         .unwrap_or_else(|_| {
                             // NOTE: Bitcoin Core moved the v30 download under a new path due to a
-                            // security issue. This link should be updated to v30.2 once it is released.
-                            // Ref: https://x.com/bitcoincoreorg/status/2008284092983369886
+                            // security issue. This link should be updated to v30.2 once it is
+                            // released. Ref: https://x.com/bitcoincoreorg/status/2008284092983369886
                             "https://bitcoincore.org/bin/insecure-wallet-deletion/bitcoin-core-30.0"
                                 .to_owned()
                         });
