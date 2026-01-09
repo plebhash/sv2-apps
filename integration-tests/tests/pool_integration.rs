@@ -386,7 +386,7 @@ async fn pool_reject_setup_connection_with_non_mining_protocol() {
     let (_tproxy, _) =
         start_sv2_translator(&[pool_translator_sniffer_addr], false, vec![], vec![], None).await;
 
-    std::thread::sleep(std::time::Duration::from_secs(1));
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     pool_translator_sniffer
         .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
