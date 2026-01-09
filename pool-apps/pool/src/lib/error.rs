@@ -106,6 +106,8 @@ pub enum PoolError {
     FailedToSendCoinbaseOutputConstraints,
     /// BitcoinCoreSv2 cancellation token activated
     BitcoinCoreSv2CancellationTokenActivated,
+    /// Unsupported Protocol
+    UnsupportedProtocol,
 }
 
 impl std::fmt::Display for PoolError {
@@ -188,7 +190,8 @@ impl std::fmt::Display for PoolError {
             }
             BitcoinCoreSv2CancellationTokenActivated => {
                 write!(f, "BitcoinCoreSv2 cancellation token activated")
-            }
+            },
+            UnsupportedProtocol => write!(f, "Protocol not supported")
         }
     }
 }
