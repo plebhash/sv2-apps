@@ -6,7 +6,7 @@ use crate::{
     utils::{ShutdownMessage, UpstreamEntry},
 };
 use async_channel::{unbounded, Receiver, Sender};
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 use stratum_apps::{
     network_helpers::noise_stream::NoiseTcpStream,
     stratum_core::{
@@ -48,6 +48,7 @@ pub struct Upstream {
     pub upstream_channel_state: UpstreamChannelState,
     /// Extensions that the translator requires (must be supported by server)
     pub required_extensions: Vec<u16>,
+    address: SocketAddr
 }
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -127,6 +128,7 @@ impl Upstream {
                         return Ok(Self {
                             upstream_channel_state,
                             required_extensions: required_extensions.clone(),
+                            address: upstream.addr.clone()
                         });
                     }
                     Err(e) => {
@@ -223,7 +225,7 @@ impl Upstream {
     pub async fn setup_connection(&mut self) -> Result<(), TproxyError> {
         debug!("Upstream: initiating SV2 handshake...");
         // Build SetupConnection message
-        let setup_conn_msg = Self::get_setup_connection_message(2, 2, false)?;
+        let setup_conn_msg = Self::get_setup_connection_message(2, 2, &self.address, false)?;
         let sv2_frame: Sv2Frame =
             Message::Common(setup_conn_msg.into())
                 .try_into()
@@ -470,9 +472,10 @@ impl Upstream {
     fn get_setup_connection_message(
         min_version: u16,
         max_version: u16,
+        address: &SocketAddr,
         is_work_selection_enabled: bool,
     ) -> Result<SetupConnection<'static>, TproxyError> {
-        let endpoint_host = "0.0.0.0".to_string().into_bytes().try_into()?;
+        let endpoint_host = address.ip().to_string().into_bytes().try_into()?;
         let vendor = "SRI".to_string().try_into()?;
         let hardware_version = "Translator Proxy".to_string().try_into()?;
         let firmware = String::new().try_into()?;
@@ -489,7 +492,7 @@ impl Upstream {
             max_version,
             flags,
             endpoint_host,
-            endpoint_port: 50,
+            endpoint_port: address.port(),
             vendor,
             hardware_version,
             firmware,
