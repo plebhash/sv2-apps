@@ -128,7 +128,7 @@ impl Upstream {
             upstream_data,
             upstream_channel,
             required_extensions,
-            address: addr.clone(),
+            address: *addr,
         })
     }
 
