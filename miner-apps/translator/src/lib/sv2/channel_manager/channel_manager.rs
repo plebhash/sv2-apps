@@ -1,10 +1,8 @@
 use crate::{
+    aggregation_mode::AGGREGATION_MODE,
     error::{self, TproxyError, TproxyErrorKind, TproxyResult},
     status::{handle_error, Status, StatusSender},
-    sv2::channel_manager::{
-        channel::ChannelState,
-        data::{ChannelManagerData, ChannelMode},
-    },
+    sv2::channel_manager::{channel::ChannelState, data::ChannelManagerData},
     utils::ShutdownMessage,
 };
 use async_channel::{Receiver, Sender};
@@ -84,7 +82,6 @@ impl ChannelManager {
         sv1_server_sender: Sender<(Mining<'static>, Option<Vec<Tlv>>)>,
         sv1_server_receiver: Receiver<(Mining<'static>, Option<Vec<Tlv>>)>,
         status_sender: Sender<Status>,
-        mode: ChannelMode,
         supported_extensions: Vec<u16>,
         required_extensions: Vec<u16>,
     ) -> Self {
@@ -95,7 +92,7 @@ impl ChannelManager {
             sv1_server_receiver,
             status_sender,
         );
-        let channel_manager_data = Arc::new(Mutex::new(ChannelManagerData::new(mode)));
+        let channel_manager_data = Arc::new(Mutex::new(ChannelManagerData::new()));
         Self {
             channel_state,
             channel_manager_data,
@@ -270,11 +267,9 @@ impl ChannelManager {
                 let mut user_identity = m.user_identity.as_utf8_or_hex();
                 let hashrate = m.nominal_hash_rate;
                 let min_extranonce_size = m.min_extranonce_size as usize;
-                let mode = self
-                    .channel_manager_data
-                    .super_safe_lock(|c| c.mode.clone());
+                let aggregated_mode = AGGREGATION_MODE.get().expect("aggregation mode not set");
 
-                if mode == ChannelMode::Aggregated {
+                if *aggregated_mode {
                     if self
                         .channel_manager_data
                         .super_safe_lock(|c| c.upstream_extended_channel.is_some())
@@ -433,13 +428,12 @@ impl ChannelManager {
                     }
                 }
                 // In aggregated mode, add extra bytes for translator search space allocation
-                let upstream_min_extranonce_size = self.channel_manager_data.super_safe_lock(|c| {
-                    if c.mode == ChannelMode::Aggregated {
-                        min_extranonce_size + AGGREGATED_MODE_TRANSLATOR_SEARCH_SPACE_BYTES
-                    } else {
-                        min_extranonce_size
-                    }
-                });
+                let aggregated_mode = AGGREGATION_MODE.get().expect("aggregation mode not set");
+                let upstream_min_extranonce_size = if *aggregated_mode {
+                    min_extranonce_size + AGGREGATED_MODE_TRANSLATOR_SEARCH_SPACE_BYTES
+                } else {
+                    min_extranonce_size
+                };
 
                 // Update the message with the adjusted extranonce size for upstream
                 open_channel_msg.min_extranonce_size = upstream_min_extranonce_size as u16;
@@ -489,11 +483,9 @@ impl ChannelManager {
                         "SubmitSharesExtended: valid share, forwarding it to upstream | channel_id: {}, sequence_number: {} ☑️",
                         m.channel_id, m.sequence_number
                     );
-                    let mode = self
-                        .channel_manager_data
-                        .super_safe_lock(|c| c.mode.clone());
+                    let aggregated_mode = AGGREGATION_MODE.get().expect("aggregation mode not set");
 
-                    if mode == ChannelMode::Aggregated
+                    if *aggregated_mode
                         && self
                             .channel_manager_data
                             .super_safe_lock(|c| c.upstream_extended_channel.is_some())
@@ -658,11 +650,9 @@ impl ChannelManager {
             }
             Mining::UpdateChannel(mut m) => {
                 debug!("Received UpdateChannel from SV1Server: {:?}", m);
-                let mode = self
-                    .channel_manager_data
-                    .super_safe_lock(|c| c.mode.clone());
+                let aggregated_mode = AGGREGATION_MODE.get().expect("aggregation mode not set");
 
-                if mode == ChannelMode::Aggregated {
+                if *aggregated_mode {
                     let upstream_extended_channel_id =
                         self.channel_manager_data.super_safe_lock(|c| {
                             c.upstream_extended_channel

@@ -22,13 +22,15 @@ pub use stratum_apps::stratum_core::sv1_api::server_to_client;
 use config::TranslatorConfig;
 
 use crate::{
+    aggregation_mode::AGGREGATION_MODE,
     error::TproxyErrorKind,
     status::{State, Status},
     sv1::sv1_server::sv1_server::Sv1Server,
-    sv2::{channel_manager::ChannelMode, ChannelManager, Upstream},
+    sv2::{ChannelManager, Upstream},
     utils::{ShutdownMessage, UpstreamEntry},
 };
 
+mod aggregation_mode;
 pub mod config;
 pub mod error;
 mod io_task;
@@ -61,6 +63,11 @@ impl TranslatorSv2 {
     /// protocol translation, job management, and status reporting.
     pub async fn start(self) {
         info!("Starting Translator Proxy...");
+
+        // set the global aggregation mode
+        AGGREGATION_MODE
+            .set(self.config.aggregate_channels)
+            .expect("failed to set aggregation mode");
 
         let (notify_shutdown, _) = broadcast::channel::<ShutdownMessage>(1);
         let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel::<()>(1);
@@ -127,11 +134,6 @@ impl TranslatorSv2 {
             channel_manager_to_sv1_server_sender.clone(),
             sv1_server_to_channel_manager_receiver,
             status_sender.clone(),
-            if self.config.aggregate_channels {
-                ChannelMode::Aggregated
-            } else {
-                ChannelMode::NonAggregated
-            },
             self.config.supported_extensions.clone(),
             self.config.required_extensions.clone(),
         ));
