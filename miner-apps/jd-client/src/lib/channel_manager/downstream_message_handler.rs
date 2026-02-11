@@ -1094,6 +1094,11 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                                 debug!("❌ SubmitSharesError not forwarding it to upstream: ch={}, seq={}, error={code}", channel_id, upstream_message.sequence_number);
                             }
                         }
+                    } else {
+                        warn!(
+                            "⚠️ SubmitSharesStandard not forwarded to upstream: job_id={} not found in job-to-template mapping for downstream_id={}, channel_id={}",
+                            job_id, downstream_id, channel_id
+                        );
                     }
                 }
 
@@ -1312,6 +1317,11 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
                                 debug!("❌ SubmitSharesError not forwarding it to upstream: ch={}, seq={}, error={code}", channel_id, upstream_message.sequence_number);
                             }
                         }
+                    } else {
+                        warn!(
+                            "⚠️ SubmitSharesExtended not forwarded to upstream: job_id={} not found in job-to-template mapping for downstream_id={}, channel_id={}",
+                            job_id, downstream_id, channel_id
+                        );
                     }
                 }
 
