@@ -502,6 +502,25 @@ impl HandleTemplateDistributionMessagesFromServerAsync for ChannelManager {
 
                         let activated_group_job_id = data.group_channel.get_active_job().expect("active job must exist").get_job_id();
 
+                        // Update job ID to template ID mapping for all channels using the group channel
+                        // This is critical when a future template becomes active
+                        for (channel_id, _) in data.standard_channels.iter() {
+                            channel_manager_data
+                                .downstream_channel_id_and_job_id_to_template_id
+                                .insert(
+                                    (*downstream_id, *channel_id, activated_group_job_id).into(),
+                                    msg.template_id,
+                                );
+                        }
+                        for (channel_id, _) in data.extended_channels.iter() {
+                            channel_manager_data
+                                .downstream_channel_id_and_job_id_to_template_id
+                                .insert(
+                                    (*downstream_id, *channel_id, activated_group_job_id).into(),
+                                    msg.template_id,
+                                );
+                        }
+
                         let group_set_new_prev_hash_message = SetNewPrevHashMp {
                             channel_id: group_channel_id,
                             job_id: activated_group_job_id,
@@ -523,6 +542,16 @@ impl HandleTemplateDistributionMessagesFromServerAsync for ChannelManager {
                         // if yes, we need to send the SetNewPrevHashMp to the standard channel
                         if data.require_std_job {
                             let activated_standard_job_id = standard_channel.get_active_job().expect("active job must exist").get_job_id();
+                            
+                            // Update job ID to template ID mapping for this standard channel
+                            // This is critical when a future template becomes active
+                            channel_manager_data
+                                .downstream_channel_id_and_job_id_to_template_id
+                                .insert(
+                                    (*downstream_id, *channel_id, activated_standard_job_id).into(),
+                                    msg.template_id,
+                                );
+                            
                             let standard_set_new_prev_hash_message = SetNewPrevHashMp {
                                 channel_id: *channel_id,
                                 job_id: activated_standard_job_id,
