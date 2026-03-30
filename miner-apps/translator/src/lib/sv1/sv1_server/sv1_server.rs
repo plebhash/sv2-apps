@@ -582,11 +582,6 @@ impl Sv1Server {
                                 downstream_id
                             );
 
-                            // Set flag to indicate we're processing queued responses
-                            downstream
-                                .processing_queued_sv1_handshake_responses
-                                .store(true, Ordering::SeqCst);
-
                             for message in queued_messages {
                                 let is_authorize =
                                     if let json_rpc::Message::StandardRequest(request) = &message {

@@ -49,8 +49,6 @@ pub struct Downstream {
     pub downstream_channel_state: DownstreamChannelState,
     // Flag to track if SV1 handshake is complete (subscribe + authorize)
     pub sv1_handshake_complete: Arc<AtomicBool>,
-    // Flag to indicate we're processing queued Sv1 handshake message responses
-    pub processing_queued_sv1_handshake_responses: Arc<AtomicBool>,
 }
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -84,7 +82,6 @@ impl Downstream {
             downstream_data,
             downstream_channel_state,
             sv1_handshake_complete: Arc::new(AtomicBool::new(false)),
-            processing_queued_sv1_handshake_responses: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -200,11 +197,6 @@ impl Downstream {
                 if !id_matches {
                     return Ok(()); // Message not intended for this downstream
                 }
-
-                // Check if this is a queued message response
-                let is_queued_sv1_handshake_response = self
-                    .processing_queued_sv1_handshake_responses
-                    .load(Ordering::SeqCst);
 
                 // Handle messages based on message type and handshake state
                 if let Message::Notification(notification) = &message {
@@ -328,22 +320,8 @@ impl Downstream {
                             }
                         }
                     }
-                } else if is_queued_sv1_handshake_response {
-                    // For non-notification messages, send if processing queued handshake responses
-                    self.downstream_channel_state
-                        .downstream_sv1_sender
-                        .send(message.clone())
-                        .await
-                        .map_err(|e| {
-                            error!("Down: Failed to send queued message to downstream: {:?}", e);
-                            TproxyError::disconnect(
-                                TproxyErrorKind::ChannelErrorSender,
-                                downstream_id.unwrap_or(0),
-                            )
-                        })?;
                 } else {
-                    // Neither handshake complete nor queued response - skip non-notification
-                    // messages
+                    // Handshake not complete - skip non-notification messages.
                     debug!("Down: SV1 handshake not complete, skipping non-notification message");
                 }
             }
