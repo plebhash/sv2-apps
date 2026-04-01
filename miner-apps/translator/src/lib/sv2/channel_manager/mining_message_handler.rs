@@ -560,6 +560,20 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                         TproxyError::fallback(TproxyErrorKind::FailedToProcessNewExtendedMiningJob)
                     })?;
 
+                // keep group-channel state in sync when the upstream sends
+                // NewExtendedMiningJob to a member channel_id
+                for mut group_channel in self.group_channels.iter_mut() {
+                    if group_channel
+                        .get_channel_ids()
+                        .contains(&m_static.channel_id)
+                    {
+                        let mut group_job = m_static.clone();
+                        group_job.channel_id = group_channel.get_group_channel_id();
+                        group_channel.on_new_extended_mining_job(group_job);
+                        break;
+                    }
+                }
+
                 // only send this message to the SV1Server if it's not a future job
                 if !m_static.is_future() {
                     let new_extended_mining_job_message = m_static.clone();
@@ -660,13 +674,13 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                     }
                 // we are not in aggregated mode.. was the message sent to a group channel?
                 } else if let Some(mut group_channel) = self.group_channels.get_mut(&m.channel_id) {
-                    // update group channel state
-                    group_channel
-                        .on_set_new_prev_hash(m_static.clone())
-                        .map_err(|e| {
-                            error!("Failed to set new prev hash: {:?}", e);
-                            TproxyError::fallback(TproxyErrorKind::FailedToProcessSetNewPrevHash)
-                        })?;
+                    // update group channel state (non-fatal: continue processing per-channel)
+                    if let Err(e) = group_channel.on_set_new_prev_hash(m_static.clone()) {
+                        error!(
+                            "Failed to set new prev hash on group channel {}: {:?}",
+                            m.channel_id, e
+                        );
+                    }
 
                     // there's no aggregated channel, so we need to process the message for each
                     // individual channel on the group
@@ -676,28 +690,35 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                             .get_mut(channel_id)
                             .ok_or(TproxyError::fallback(TproxyErrorKind::ChannelNotFound))?;
 
-                        channel
-                            .on_set_new_prev_hash(m_static.clone())
-                            .map_err(|e| {
-                                error!("Failed to set new prev hash: {:?}", e);
-                                TproxyError::fallback(
-                                    TproxyErrorKind::FailedToProcessSetNewPrevHash,
-                                )
-                            })?;
+                        let mut set_new_prev_hash_for_channel = m_static.clone();
+                        set_new_prev_hash_for_channel.channel_id = *channel_id;
+
+                        // non-fatal per-channel update: skip failing channel, continue others
+                        if let Err(e) =
+                            channel.on_set_new_prev_hash(set_new_prev_hash_for_channel.clone())
+                        {
+                            error!(
+                                "Failed to set new prev hash for channel {}: {:?}",
+                                channel_id, e
+                            );
+                            continue;
+                        }
 
                         // for each extended channel, send one SetNewPrevHash message to the
                         // SV1Server
-                        let mut set_new_prev_hash_message = m_static.clone();
-                        set_new_prev_hash_message.channel_id = *channel_id;
-                        set_new_prev_hash_messages.push(set_new_prev_hash_message);
+                        set_new_prev_hash_messages.push(set_new_prev_hash_for_channel);
 
                         // for each extended channel, send one NewExtendedMiningJob message to
                         // the SV1Server
-                        let new_extended_mining_job_message = channel
-                            .get_active_job()
-                            .expect("active job must exist")
-                            .clone();
-                        new_extended_mining_job_messages.push(new_extended_mining_job_message.0);
+                        let Some(new_extended_mining_job_message) = channel.get_active_job() else {
+                            warn!(
+                                "No active job for channel {}, skipping NewExtendedMiningJob forwarding after SetNewPrevHash",
+                                channel_id
+                            );
+                            continue;
+                        };
+                        new_extended_mining_job_messages
+                            .push(new_extended_mining_job_message.0.clone());
                     }
                 // if the message was not sent to a group channel, and we're not in aggregated
                 // mode, we need to process the message for a specific channel
