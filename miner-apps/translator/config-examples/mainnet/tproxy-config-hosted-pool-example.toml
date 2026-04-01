@@ -14,10 +14,10 @@ downstream_extranonce2_size = 4
 
 # User identity/username for pool connection
 # This will be appended with a counter for each mining client (e.g., username.miner1, username.miner2)
-user_identity = "your_username_here"
+user_identity = "plebhash"
 
 # Aggregate channels: if true, all miners share one upstream channel; if false, each miner gets its own channel
-aggregate_channels = true
+aggregate_channels = false
 
 # Enable this option to set a predefined log file path.
 # When enabled, logs will always be written to this file.
@@ -47,15 +47,8 @@ enable_vardiff = true
 # Interval in seconds for sending keepalive jobs to downstream miners.
 job_keepalive_interval_secs = 60
 
+# Braiins Pool
 [[upstreams]]
-# SRI Pool Primary Pool
-# address accepts IP addresses or hostnames (e.g. "pool.example.com")
-address = "75.119.150.111"
-port = 3333
-authority_pubkey = "9auqWEzQDVyd2oe1JVGFLMLHZtCo2FFqZwtKA5gd9xbuEu7PH72"
-
-# Braiins Pool Backup Pool
-[[upstreams]]
-address = "107.170.42.64" 
+address = "107.170.42.64"
 port = 3333
 authority_pubkey = "9awtMD5KQgvRUh2yFbjVeT7b6hjipWcAsQHd6wEhgtDT9soosna"
