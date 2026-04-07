@@ -25,32 +25,53 @@ impl ServerMonitoring for ChannelManager {
                     self.extended_channels.get(&AGGREGATED_CHANNEL_ID)
                 {
                     let channel_id = aggregated_extended_channel.get_channel_id();
-                    let target = aggregated_extended_channel.get_target();
-                    let extranonce_prefix = aggregated_extended_channel.get_extranonce_prefix();
-                    let user_identity = aggregated_extended_channel.get_user_identity();
-                    let share_accounting = aggregated_extended_channel.get_share_accounting();
+                    let target = *aggregated_extended_channel.get_target();
+                    let extranonce_prefix =
+                        aggregated_extended_channel.get_extranonce_prefix().clone();
+                    let user_identity = aggregated_extended_channel.get_user_identity().clone();
+                    let full_extranonce_size =
+                        aggregated_extended_channel.get_full_extranonce_size();
+                    let rollable_extranonce_size =
+                        aggregated_extended_channel.get_rollable_extranonce_size();
+                    let version_rolling = aggregated_extended_channel.is_version_rolling();
+                    let nominal_hashrate = aggregated_extended_channel.get_nominal_hashrate();
+
+                    let mut shares_acknowledged: u32 = 0;
+                    let mut shares_submitted: u32 = 0;
+                    let mut shares_rejected: u32 = 0;
+                    let mut share_work_sum: f64 = 0.0;
+                    let mut best_diff: f64 = 0.0;
+                    let mut blocks_found: u32 = 0;
+
+                    for entry in self.extended_channels.iter() {
+                        let share_accounting = entry.get_share_accounting();
+                        shares_acknowledged = shares_acknowledged
+                            .saturating_add(share_accounting.get_acknowledged_shares());
+                        shares_submitted = shares_submitted
+                            .saturating_add(share_accounting.get_validated_shares());
+                        shares_rejected =
+                            shares_rejected.saturating_add(share_accounting.get_rejected_shares());
+                        share_work_sum += share_accounting.get_share_work_sum();
+                        best_diff = best_diff.max(share_accounting.get_best_diff());
+                        blocks_found =
+                            blocks_found.saturating_add(share_accounting.get_blocks_found());
+                    }
 
                     extended_channels.push(ServerExtendedChannelInfo {
                         channel_id,
-                        user_identity: user_identity.clone(),
-                        nominal_hashrate: if report_hashrate {
-                            Some(aggregated_extended_channel.get_nominal_hashrate())
-                        } else {
-                            None
-                        },
+                        user_identity,
+                        nominal_hashrate: report_hashrate.then_some(nominal_hashrate),
                         target_hex: hex::encode(target.to_be_bytes()),
                         extranonce_prefix_hex: hex::encode(extranonce_prefix),
-                        full_extranonce_size: aggregated_extended_channel
-                            .get_full_extranonce_size(),
-                        rollable_extranonce_size: aggregated_extended_channel
-                            .get_rollable_extranonce_size(),
-                        version_rolling: aggregated_extended_channel.is_version_rolling(),
-                        shares_acknowledged: share_accounting.get_acknowledged_shares(),
-                        shares_submitted: share_accounting.get_validated_shares(),
-                        shares_rejected: share_accounting.get_rejected_shares(),
-                        share_work_sum: share_accounting.get_share_work_sum(),
-                        best_diff: share_accounting.get_best_diff(),
-                        blocks_found: share_accounting.get_blocks_found(),
+                        full_extranonce_size,
+                        rollable_extranonce_size,
+                        version_rolling,
+                        shares_acknowledged,
+                        shares_submitted,
+                        shares_rejected,
+                        share_work_sum,
+                        best_diff,
+                        blocks_found,
                     });
                 }
             }

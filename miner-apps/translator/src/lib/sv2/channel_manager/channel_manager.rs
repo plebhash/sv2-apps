@@ -400,11 +400,6 @@ impl ChannelManager {
                             )
                         });
                 if let Some((Ok(_result), _share_accounting)) = value {
-                    info!(
-                        "SubmitSharesExtended: valid share, forwarding it to upstream | channel_id: {}, sequence_number: {} ☑️",
-                        m.channel_id, m.sequence_number
-                    );
-
                     if is_aggregated()
                         && self.extended_channels.contains_key(&AGGREGATED_CHANNEL_ID)
                     {
@@ -413,6 +408,10 @@ impl ChannelManager {
                             .get(&AGGREGATED_CHANNEL_ID)
                             .map(|ch| ch.get_channel_id())
                             .unwrap();
+                        info!(
+                        "SubmitSharesExtended: valid share, forwarding it to upstream | channel_id: {}, sequence_number: {} ☑️",
+                            upstream_extended_channel_id, m.sequence_number
+                        );
 
                         // In aggregated mode, use a single sequence counter for all valid shares
                         m.sequence_number =
@@ -446,6 +445,10 @@ impl ChannelManager {
                         // channel id
                         m.channel_id = upstream_extended_channel_id;
                     } else {
+                        info!(
+                            "SubmitSharesExtended: valid share, forwarding it to upstream | channel_id: {}, sequence_number: {} ☑️",
+                            m.channel_id, m.sequence_number
+                        );
                         // In non-aggregated mode, each downstream channel has its own sequence
                         // counter
                         m.sequence_number = self.next_share_sequence_number(m.channel_id);
