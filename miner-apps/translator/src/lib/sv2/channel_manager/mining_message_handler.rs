@@ -167,7 +167,7 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                     .expect("next_prefix_extended should return a value for valid input")
                     .into_b032();
                 let new_downstream_extended_channel = ExtendedChannel::new(
-                    m.channel_id,
+                    1,
                     user_identity.clone(),
                     new_extranonce_prefix.clone().into_static().to_vec(),
                     target,
@@ -176,12 +176,12 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
                     new_extranonce_size,
                 );
                 self.extended_channels
-                    .insert(m.channel_id, new_downstream_extended_channel);
+                    .insert(1, new_downstream_extended_channel);
                 self.aggregated_channel_state
                     .set(AggregatedState::Connected);
                 let new_open_extended_mining_channel_success = OpenExtendedMiningChannelSuccess {
                     request_id: m.request_id,
-                    channel_id: m.channel_id,
+                    channel_id: 1,
                     extranonce_prefix: new_extranonce_prefix,
                     extranonce_size: new_extranonce_size,
                     target: m.target.clone(),
