@@ -1,6 +1,6 @@
 [package]
 name = "translator_sv2"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["The Stratum V2 Developers"]
 edition = "2021"
 description = "SV1 to SV2 translation proxy"
@@ -42,4 +42,3 @@ hotpath-alloc = ["hotpath", "hotpath/hotpath-alloc"]
 
 [dev-dependencies]
 sha2 = "0.10.6"
-
