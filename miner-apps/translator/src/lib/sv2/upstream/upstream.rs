@@ -283,15 +283,15 @@ impl Upstream {
                 requested_extensions: Seq064K::new(self.required_extensions.clone()).unwrap(),
             };
 
+            info!(
+                "Sending RequestExtensions message to upstream: {}",
+                require_extensions
+            );
+
             let sv2_frame: Sv2Frame =
                 AnyMessage::Extensions(require_extensions.into_static().into())
                     .try_into()
                     .map_err(TproxyError::shutdown)?;
-
-            info!(
-                "Sending RequestExtensions message to upstream: {:?}",
-                sv2_frame
-            );
 
             self.upstream_channel_state
                 .upstream_sender
