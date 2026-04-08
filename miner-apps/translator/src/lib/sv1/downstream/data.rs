@@ -82,7 +82,7 @@ impl DownstreamData {
     pub fn set_upstream_target(&mut self, upstream_target: Target, downstream_id: DownstreamId) {
         self.upstream_target = Some(upstream_target);
         debug!(
-            "Downstream {downstream_id}: Set upstream target to {:?}",
+            "Downstream {downstream_id}: Set upstream target to {}",
             upstream_target
         );
     }

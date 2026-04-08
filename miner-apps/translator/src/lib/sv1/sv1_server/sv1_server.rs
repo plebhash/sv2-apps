@@ -356,10 +356,7 @@ impl Sv1Server {
 
             match response {
                 Ok(Some(response_msg)) => {
-                    debug!(
-                        "Down: Sending Sv1 message to downstream: {:?}",
-                        response_msg
-                    );
+                    debug!("Down: Sending Sv1 message to downstream: {}", response_msg);
                     downstream
                         .downstream_channel_state
                         .downstream_sv1_sender
@@ -877,7 +874,7 @@ impl Sv1Server {
         let new_target =
             Target::from_le_bytes(set_target.maximum_target.inner_as_ref().try_into().unwrap());
         debug!(
-            "Forwarding SetTarget to downstreams: channel_id={}, target={:?}",
+            "Forwarding SetTarget to downstreams: channel_id={}, target={}",
             set_target.channel_id, new_target
         );
 

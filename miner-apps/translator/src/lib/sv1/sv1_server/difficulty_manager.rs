@@ -113,7 +113,7 @@ impl Sv1Server {
                             // Case 1: new_target >= upstream_target, send set_difficulty
                             // immediately
                             trace!(
-                                "✅ Target comparison: new_target ({:?}) >= upstream_target ({:?}) for downstream {}, will send set_difficulty immediately",
+                                "✅ Target comparison: new_target ({}) >= upstream_target ({}) for downstream {}, will send set_difficulty immediately",
                                 new_target, upstream_target, downstream_id
                             );
                             immediate_updates.push((channel_id, Some(*downstream_id), new_target));
@@ -121,7 +121,7 @@ impl Sv1Server {
                             // Case 2: new_target < upstream_target, delay set_difficulty until
                             // SetTarget
                             trace!(
-                                "⏳ Target comparison: new_target ({:?}) < upstream_target ({:?}) for downstream {}, will delay set_difficulty until SetTarget",
+                                "⏳ Target comparison: new_target ({}) < upstream_target ({}) for downstream {}, will delay set_difficulty until SetTarget",
                                 new_target, upstream_target, downstream_id
                             );
                             self.pending_target_updates.super_safe_lock(|data| {
@@ -240,7 +240,7 @@ impl Sv1Server {
         };
 
         debug!(
-            "Sending aggregated UpdateChannel: channel_id={}, total_hashrate={}, min_target={:?}, downstreams={}, vardiff_updates={}",
+            "Sending aggregated UpdateChannel: channel_id={}, total_hashrate={}, min_target={}, downstreams={}, vardiff_updates={}",
             channel_id,
             total_hashrate,
             min_target,
@@ -270,7 +270,7 @@ impl Sv1Server {
             };
 
             debug!(
-                "Sending UpdateChannel for downstream {}: channel_id={}, hashrate={}, target={:?}",
+                "Sending UpdateChannel for downstream {}: channel_id={}, hashrate={}, target={}",
                 downstream_id, channel_id, new_hashrate, new_target
             );
 
@@ -297,7 +297,7 @@ impl Sv1Server {
         let new_upstream_target =
             Target::from_le_bytes(set_target.maximum_target.inner_as_ref().try_into().unwrap());
         debug!(
-            "Received SetTarget for channel {}: new_upstream_target = {:?}",
+            "Received SetTarget for channel {}: new_upstream_target = {}",
             set_target.channel_id, new_upstream_target
         );
 
@@ -406,7 +406,7 @@ impl Sv1Server {
                 } else {
                     // WARNING: Upstream gave us a target higher than what we requested
                     error!(
-                        "❌ Protocol issue: SetTarget response has target ({:?}) which is higher than requested target ({:?}) in UpdateChannel for channel {:?}. Ignoring this pending update for downstream {:?}.",
+                        "❌ Protocol issue: SetTarget response has target ({}) which is higher than requested target ({}) in UpdateChannel for channel {}. Ignoring this pending update for downstream {}.",
                         new_upstream_target, pending_update.new_target, channel_id, pending_update.downstream_id
                     );
                     false // remove from pending list (don't keep invalid requests)

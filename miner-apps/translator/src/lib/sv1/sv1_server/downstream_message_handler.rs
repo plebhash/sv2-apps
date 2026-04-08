@@ -23,10 +23,7 @@ impl IsServer<'static> for Sv1Server {
         let downstream_id = client_id.expect("Downstream id should exist");
 
         info!("Received mining.configure from SV1 downstream");
-        debug!(
-            "Downstream {downstream_id}: mining.configure = {:?}",
-            request
-        );
+        debug!("Downstream {downstream_id}: mining.configure = {}", request);
 
         let downstream = self
             .downstreams
@@ -66,7 +63,7 @@ impl IsServer<'static> for Sv1Server {
         let downstream_id = client_id.expect("Downstream id should exist");
 
         info!("Received mining.subscribe from Sv1 downstream");
-        debug!("Down: Handling mining.subscribe: {:?}", request);
+        debug!("Down: Handling mining.subscribe: {}", request);
 
         let set_difficulty_sub = (
             "mining.set_difficulty".to_string(),
@@ -88,7 +85,7 @@ impl IsServer<'static> for Sv1Server {
     ) -> bool {
         let downstream_id = client_id.expect("Downstream id should exist");
         info!("Received mining.authorize from Sv1 downstream {downstream_id}");
-        debug!("Down: Handling mining.authorize: {:?}", request);
+        debug!("Down: Handling mining.authorize: {}", request);
         true
     }
 

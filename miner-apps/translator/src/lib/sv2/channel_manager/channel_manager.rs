@@ -372,7 +372,7 @@ impl ChannelManager {
                 }
 
                 info!(
-                    "Sending OpenExtendedMiningChannel message to upstream: {:?}",
+                    "Sending OpenExtendedMiningChannel message to upstream: {}",
                     open_channel_msg
                 );
 
@@ -524,7 +524,7 @@ impl ChannelManager {
                             let sv2_frame = StandardSv2Frame::from_bytes(frame_bytes.into())
                                 .map_err(|missing| {
                                     error!(
-                                        "Failed to convert frame bytes to StandardSv2Frame: {:?}",
+                                        "Failed to convert frame bytes to StandardSv2Frame: {}",
                                         missing
                                     );
                                     TproxyError::shutdown(framing_sv2::Error::ExpectedSv2Frame)
@@ -550,7 +550,7 @@ impl ChannelManager {
                 }
             }
             Mining::UpdateChannel(mut m) => {
-                debug!("Received UpdateChannel from SV1Server: {:?}", m);
+                debug!("Received UpdateChannel from SV1Server: {}", m);
 
                 if is_aggregated() {
                     // Update the aggregated channel's nominal hashrate so
@@ -570,7 +570,7 @@ impl ChannelManager {
                 }
 
                 info!(
-                    "Sending UpdateChannel message to upstream for channel_id: {:?}",
+                    "Sending UpdateChannel message to upstream for channel_id: {}",
                     m.channel_id
                 );
                 // Forward UpdateChannel message to upstream
@@ -620,7 +620,7 @@ impl ChannelManager {
                     })?;
             }
             _ => {
-                warn!("Unhandled downstream message: {:?}", message);
+                warn!("Unhandled downstream message: {}", message);
             }
         }
 
