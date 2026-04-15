@@ -189,6 +189,43 @@ pub struct UpstreamEntry {
     pub tried_or_flagged: bool,
 }
 
+/// Defines the operational mode for Translator Proxy.
+///
+/// It can operate in two different modes that affect how Sv1
+/// downstream connections are mapped to the upstream Sv2 channels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TproxyMode {
+    /// All Sv1 downstream connections share a single extended Sv2 channel.
+    /// This mode uses extranonce_prefix allocation to distinguish between
+    /// different downstream miners while presenting them as a single entity
+    /// to the upstream server. This is more efficient for pools with many
+    /// miners.
+    Aggregated,
+    /// Each Sv1 downstream connection gets its own dedicated extended Sv2 channel.
+    /// This mode provides complete isolation between downstream connections
+    /// but may be less efficient for large numbers of miners.
+    NonAggregated,
+}
+
+impl From<bool> for TproxyMode {
+    fn from(value: bool) -> Self {
+        if value {
+            return TproxyMode::Aggregated;
+        }
+        TproxyMode::NonAggregated
+    }
+}
+
+impl TproxyMode {
+    pub(crate) fn is_aggregated(self) -> bool {
+        TproxyMode::Aggregated == self
+    }
+
+    pub(crate) fn is_non_aggregated(self) -> bool {
+        TproxyMode::NonAggregated == self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,7 +1,6 @@
 use crate::{
     config::TranslatorConfig,
     error::{self, TproxyError, TproxyErrorKind, TproxyResult},
-    is_aggregated, is_non_aggregated,
     status::{handle_error, Status, StatusSender},
     sv1::{
         downstream::{downstream::Downstream, SubmitShareWithChannelId},
@@ -9,7 +8,7 @@ use crate::{
             channel::Sv1ServerChannelState, is_mining_authorize, KEEPALIVE_JOB_ID_DELIMITER,
         },
     },
-    utils::AGGREGATED_CHANNEL_ID,
+    utils::{TproxyMode, AGGREGATED_CHANNEL_ID},
 };
 use async_channel::{Receiver, Sender};
 use dashmap::DashMap;
@@ -85,6 +84,7 @@ pub struct Sv1Server {
     /// Valid Sv1 jobs storage, containing only a single shared entry (AGGREGATED_CHANNEL_ID) in
     /// case of channels aggregation (aggregated mode)
     pub(crate) valid_sv1_jobs: Arc<DashMap<ChannelId, Vec<server_to_client::Notify<'static>>>>,
+    pub(crate) mode: TproxyMode,
 }
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -171,6 +171,7 @@ impl Sv1Server {
         channel_manager_receiver: Receiver<(Mining<'static>, Option<Vec<Tlv>>)>,
         channel_manager_sender: Sender<(Mining<'static>, Option<Vec<Tlv>>)>,
         config: TranslatorConfig,
+        mode: TproxyMode,
     ) -> Self {
         let shares_per_minute = config.downstream_difficulty_config.shares_per_minute;
         let sv1_server_channel_state =
@@ -192,6 +193,7 @@ impl Sv1Server {
             prevhashes: Arc::new(DashMap::new()),
             pending_target_updates: Arc::new(Mutex::new(Vec::new())),
             valid_sv1_jobs: Arc::new(DashMap::new()),
+            mode,
         }
     }
 
@@ -510,7 +512,7 @@ impl Sv1Server {
         .map_err(|_| TproxyError::shutdown(TproxyErrorKind::SV1Error))?;
 
         // Only add TLV fields with user identity in non-aggregated mode
-        let tlv_fields = if is_non_aggregated() {
+        let tlv_fields = if self.mode.is_non_aggregated() {
             let Some(downstream) = self
                 .downstreams
                 .get(&message.downstream_id)
@@ -749,7 +751,7 @@ impl Sv1Server {
 
                     // Update job storage based on the configured mode
                     let notify_parsed = notify.clone();
-                    let job_channel_id = if is_non_aggregated() {
+                    let job_channel_id = if self.mode.is_non_aggregated() {
                         m.channel_id
                     } else {
                         AGGREGATED_CHANNEL_ID
@@ -980,7 +982,7 @@ impl Sv1Server {
             }
         };
 
-        if is_aggregated() {
+        if self.mode.is_aggregated() {
             // Aggregated mode: send set_difficulty to ALL downstreams and update hashrate
             return self
                 .send_set_difficulty_to_all_downstreams(new_target, derived_hashrate)
@@ -1230,7 +1232,7 @@ impl Sv1Server {
                     keepalive_notify.time = HexU32Be(new_time);
 
                     // Add the keepalive job to valid jobs so shares can be validated
-                    let job_channel_id = if is_aggregated() {
+                    let job_channel_id = if self.mode.is_aggregated() {
                         Some(AGGREGATED_CHANNEL_ID)
                     } else {
                         channel_id
@@ -1303,7 +1305,7 @@ impl Sv1Server {
         &self,
         channel_id: Option<u32>,
     ) -> Option<server_to_client::Notify<'static>> {
-        let channel_id = if is_aggregated() {
+        let channel_id = if self.mode.is_aggregated() {
             AGGREGATED_CHANNEL_ID
         } else {
             channel_id?
@@ -1321,7 +1323,7 @@ impl Sv1Server {
         job_id: &str,
         channel_id: Option<u32>,
     ) -> Option<server_to_client::Notify<'static>> {
-        let channel_id = if is_aggregated() {
+        let channel_id = if self.mode.is_aggregated() {
             AGGREGATED_CHANNEL_ID
         } else {
             channel_id?
@@ -1379,8 +1381,8 @@ mod tests {
         let (_downstream_sender, cm_receiver) = unbounded();
         let config = create_test_config();
         let addr = "127.0.0.1:3333".parse().unwrap();
-
-        Sv1Server::new(addr, cm_receiver, cm_sender, config)
+        let tproxy_mode = TproxyMode::from(config.aggregate_channels);
+        Sv1Server::new(addr, cm_receiver, cm_sender, config, tproxy_mode)
     }
 
     #[test]
@@ -1401,8 +1403,8 @@ mod tests {
         let (cm_sender, _cm_receiver) = unbounded();
         let (_downstream_sender, cm_receiver) = unbounded();
         let addr = "127.0.0.1:3333".parse().unwrap();
-
-        let server = Sv1Server::new(addr, cm_receiver, cm_sender, config);
+        let tproxy_mode = TproxyMode::from(config.aggregate_channels);
+        let server = Sv1Server::new(addr, cm_receiver, cm_sender, config, tproxy_mode);
 
         assert!(server.config.downstream_difficulty_config.enable_vardiff);
     }
@@ -1442,8 +1444,9 @@ mod tests {
         let (cm_sender, _cm_receiver) = unbounded();
         let (_downstream_sender, cm_receiver) = unbounded();
         let addr = "127.0.0.1:3333".parse().unwrap();
+        let tproxy_mode = TproxyMode::from(config.aggregate_channels);
 
-        let server = Sv1Server::new(addr, cm_receiver, cm_sender, config);
+        let server = Sv1Server::new(addr, cm_receiver, cm_sender, config, tproxy_mode);
         let target: Target = hash_rate_to_target(200.0, 5.0).unwrap();
 
         let set_target = SetTarget {
@@ -1463,8 +1466,8 @@ mod tests {
         let (cm_sender, _cm_receiver) = unbounded();
         let (_downstream_sender, cm_receiver) = unbounded();
         let addr = "127.0.0.1:3333".parse().unwrap();
-
-        let server = Sv1Server::new(addr, cm_receiver, cm_sender, config);
+        let tproxy_mode = TproxyMode::from(config.aggregate_channels);
+        let server = Sv1Server::new(addr, cm_receiver, cm_sender, config, tproxy_mode);
         let target: Target = hash_rate_to_target(200.0, 5.0).unwrap();
 
         let set_target = SetTarget {

@@ -1,9 +1,9 @@
 use crate::{
     error::{self, TproxyError, TproxyErrorKind, TproxyResult},
-    is_aggregated,
     status::{handle_error, Status, StatusSender},
     sv2::channel_manager::channel::ChannelState,
     utils::{AggregatedState, AtomicAggregatedState, AGGREGATED_CHANNEL_ID},
+    TproxyMode,
 };
 use async_channel::{Receiver, Sender};
 use dashmap::DashMap;
@@ -92,6 +92,11 @@ pub struct ChannelManager {
     /// Tracks whether the single upstream channel in aggregated mode is absent,
     /// being established, or connected.
     pub aggregated_channel_state: AtomicAggregatedState,
+    /// Current mode Tproxy is operating in.
+    pub(crate) mode: TproxyMode,
+    /// Required to show or not show hashrate on monitoring.
+    #[cfg(feature = "monitoring")]
+    pub(crate) report_hashrate: bool,
 }
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -120,6 +125,8 @@ impl ChannelManager {
         status_sender: Sender<Status>,
         supported_extensions: Vec<u16>,
         required_extensions: Vec<u16>,
+        tproxy_mode: TproxyMode,
+        #[cfg(feature = "monitoring")] report_hashrate: bool,
     ) -> Self {
         let channel_state = ChannelState::new(
             upstream_sender,
@@ -140,6 +147,9 @@ impl ChannelManager {
             negotiated_extensions: Arc::new(Mutex::new(Vec::new())),
             extranonce_factories: Arc::new(DashMap::new()),
             aggregated_channel_state: AtomicAggregatedState::new(AggregatedState::NoChannel),
+            mode: tproxy_mode,
+            #[cfg(feature = "monitoring")]
+            report_hashrate,
         }
     }
 
@@ -309,7 +319,7 @@ impl ChannelManager {
                 let hashrate = m.nominal_hash_rate;
                 let min_extranonce_size = m.min_extranonce_size as usize;
 
-                if is_aggregated() {
+                if self.mode.is_aggregated() {
                     match self.aggregated_channel_state.get() {
                         AggregatedState::Connected => {
                             return self
@@ -351,7 +361,7 @@ impl ChannelManager {
                     }
                 }
                 // In aggregated mode, add extra bytes for translator search space allocation
-                let upstream_min_extranonce_size = if is_aggregated() {
+                let upstream_min_extranonce_size = if self.mode.is_aggregated() {
                     min_extranonce_size + AGGREGATED_MODE_TRANSLATOR_SEARCH_SPACE_BYTES
                 } else {
                     min_extranonce_size
@@ -364,7 +374,7 @@ impl ChannelManager {
                 // used in the `OpenExtendedMiningChannel.Success` handler.
                 // In aggregated mode it was already inserted in the `AggregatedState::NoChannel`
                 // match arm above.
-                if !is_aggregated() {
+                if !self.mode.is_aggregated() {
                     self.pending_downstream_channels.insert(
                         open_channel_msg.request_id as DownstreamId,
                         (user_identity, hashrate, min_extranonce_size),
@@ -400,7 +410,7 @@ impl ChannelManager {
                             )
                         });
                 if let Some((Ok(_result), _share_accounting)) = value {
-                    if is_aggregated()
+                    if self.mode.is_aggregated()
                         && self.extended_channels.contains_key(&AGGREGATED_CHANNEL_ID)
                     {
                         let upstream_extended_channel_id = self
@@ -552,7 +562,7 @@ impl ChannelManager {
             Mining::UpdateChannel(mut m) => {
                 debug!("Received UpdateChannel from SV1Server: {}", m);
 
-                if is_aggregated() {
+                if self.mode.is_aggregated() {
                     // Update the aggregated channel's nominal hashrate so
                     // that monitoring reports a value consistent with the
                     // downstream vardiff estimate.
@@ -810,6 +820,9 @@ mod tests {
             status_sender,
             vec![],
             vec![],
+            TproxyMode::from(true),
+            #[cfg(feature = "monitoring")]
+            true,
         )
     }
 

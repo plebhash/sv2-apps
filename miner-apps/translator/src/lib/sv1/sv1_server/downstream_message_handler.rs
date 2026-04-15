@@ -9,7 +9,7 @@ use stratum_apps::stratum_core::sv1_api::{
 use tracing::{debug, info, warn};
 
 use crate::{
-    error, is_aggregated,
+    error,
     sv1::{downstream::SubmitShareWithChannelId, sv1_server::tlv_compatible_username, Sv1Server},
     utils::{validate_sv1_share, AGGREGATED_CHANNEL_ID},
 };
@@ -111,7 +111,7 @@ impl IsServer<'static> for Sv1Server {
             return Ok(false);
         };
 
-        let channel_id = if is_aggregated() {
+        let channel_id = if self.mode.is_aggregated() {
             AGGREGATED_CHANNEL_ID
         } else {
             channel_id

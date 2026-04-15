@@ -16,7 +16,7 @@ use std::{
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, OnceLock,
+        Arc,
     },
     time::Duration,
 };
@@ -38,7 +38,7 @@ use crate::{
     status::{State, Status},
     sv1::sv1_server::sv1_server::Sv1Server,
     sv2::{ChannelManager, Upstream},
-    utils::UpstreamEntry,
+    utils::{TproxyMode, UpstreamEntry},
 };
 
 pub mod config;
@@ -83,16 +83,10 @@ impl TranslatorSv2 {
     /// protocol translation, job management, and status reporting.
     pub async fn start(self) {
         info!("Starting Translator Proxy...");
-        // only initialized once
-        TPROXY_MODE
-            .set(self.config.aggregate_channels.into())
-            .expect("TPROXY_MODE initialized more than once");
-        VARDIFF_ENABLED
-            .set(self.config.downstream_difficulty_config.enable_vardiff)
-            .expect("VARDIFF_ENABLED initialized more than once");
 
         let cancellation_token = self.cancellation_token.clone();
         let mut fallback_coordinator = FallbackCoordinator::new();
+        let tproxy_mode = TproxyMode::from(self.config.aggregate_channels);
 
         let task_manager = Arc::new(TaskManager::new());
         let (status_sender, status_receiver) = async_channel::unbounded::<Status>();
@@ -130,6 +124,7 @@ impl TranslatorSv2 {
             channel_manager_to_sv1_server_receiver,
             sv1_server_to_channel_manager_sender,
             self.config.clone(),
+            tproxy_mode,
         ));
 
         info!("Initializing upstream connection...");
@@ -162,6 +157,9 @@ impl TranslatorSv2 {
             status_sender.clone(),
             self.config.supported_extensions.clone(),
             self.config.required_extensions.clone(),
+            tproxy_mode,
+            #[cfg(feature = "monitoring")]
+            self.config.downstream_difficulty_config.enable_vardiff,
         ));
 
         info!("Launching ChannelManager tasks...");
@@ -283,6 +281,7 @@ impl TranslatorSv2 {
                                     channel_manager_to_sv1_server_receiver,
                                     sv1_server_to_channel_manager_sender,
                                     self.config.clone(),
+                                    tproxy_mode
                                 ));
 
                                 if let Err(e) = self.initialize_upstream(
@@ -309,6 +308,9 @@ impl TranslatorSv2 {
                                     status_sender.clone(),
                                     self.config.supported_extensions.clone(),
                                     self.config.required_extensions.clone(),
+                                    tproxy_mode,
+                                    #[cfg(feature = "monitoring")]
+                                    self.config.downstream_difficulty_config.enable_vardiff
                                 ));
 
                                 info!("Launching ChannelManager tasks...");
@@ -546,71 +548,6 @@ async fn try_initialize_upstream(
         )
         .await?;
     Ok(())
-}
-
-/// Defines the operational mode for Translator Proxy.
-///
-/// It can operate in two different modes that affect how Sv1
-/// downstream connections are mapped to the upstream Sv2 channels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TproxyMode {
-    /// All Sv1 downstream connections share a single extended Sv2 channel.
-    /// This mode uses extranonce_prefix allocation to distinguish between
-    /// different downstream miners while presenting them as a single entity
-    /// to the upstream server. This is more efficient for pools with many
-    /// miners.
-    Aggregated,
-    /// Each Sv1 downstream connection gets its own dedicated extended Sv2 channel.
-    /// This mode provides complete isolation between downstream connections
-    /// but may be less efficient for large numbers of miners.
-    NonAggregated,
-}
-
-impl From<bool> for TproxyMode {
-    fn from(aggregate: bool) -> Self {
-        if aggregate {
-            return TproxyMode::Aggregated;
-        }
-
-        TproxyMode::NonAggregated
-    }
-}
-
-static TPROXY_MODE: OnceLock<TproxyMode> = OnceLock::new();
-static VARDIFF_ENABLED: OnceLock<bool> = OnceLock::new();
-
-#[cfg(not(test))]
-pub fn tproxy_mode() -> TproxyMode {
-    *TPROXY_MODE.get().expect("TPROXY_MODE has to exist")
-}
-
-// We don’t initialize `TPROXY_MODE` in tests, so any test that
-// depends on it will panic if the mode is undefined.
-// This `cfg` wrapper ensures `tproxy_mode` does not panic in
-// an undefined state by providing a default value when needed.
-#[cfg(test)]
-pub fn tproxy_mode() -> TproxyMode {
-    *TPROXY_MODE.get_or_init(|| TproxyMode::Aggregated)
-}
-
-#[inline]
-pub fn is_aggregated() -> bool {
-    matches!(tproxy_mode(), TproxyMode::Aggregated)
-}
-
-#[inline]
-pub fn is_non_aggregated() -> bool {
-    matches!(tproxy_mode(), TproxyMode::NonAggregated)
-}
-
-#[cfg(not(test))]
-pub fn vardiff_enabled() -> bool {
-    *VARDIFF_ENABLED.get().expect("VARDIFF_ENABLED has to exist")
-}
-
-#[cfg(test)]
-pub fn vardiff_enabled() -> bool {
-    *VARDIFF_ENABLED.get_or_init(|| true)
 }
 
 impl Drop for TranslatorSv2 {
