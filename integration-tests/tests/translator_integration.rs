@@ -1950,3 +1950,60 @@ async fn tproxy_sends_single_open_extended_mining_channel_in_aggregated_mode() {
 
     shutdown_all!(pool, tproxy);
 }
+
+// This test verifies whether we can spawn multiple tproxy in the
+// same process.
+//
+// More info here: https://github.com/stratum-mining/sv2-apps/issues/430
+#[tokio::test]
+async fn multiple_tproxy_sessions() {
+    start_tracing();
+    let (_tp, tp_addr) = start_template_provider(None, DifficultyLevel::High);
+    let (pool, pool_addr, _) = start_pool(sv2_tp_config(tp_addr), vec![], vec![], false).await;
+
+    let (pool_translator_sniffer_1, pool_translator_sniffer_addr_1) =
+        start_sniffer("0", pool_addr, false, vec![], None);
+    let (tproxy_1, _, _) = start_sv2_translator(
+        &[pool_translator_sniffer_addr_1],
+        true,
+        vec![],
+        vec![],
+        None,
+        false,
+    )
+    .await;
+
+    let (pool_translator_sniffer_2, pool_translator_sniffer_addr_2) =
+        start_sniffer("0", pool_addr, false, vec![], None);
+    let (tproxy_2, _, _) = start_sv2_translator(
+        &[pool_translator_sniffer_addr_2],
+        true,
+        vec![],
+        vec![],
+        None,
+        false,
+    )
+    .await;
+
+    pool_translator_sniffer_1
+        .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+        .await;
+    pool_translator_sniffer_1
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+        )
+        .await;
+
+    pool_translator_sniffer_2
+        .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+        .await;
+    pool_translator_sniffer_2
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+        )
+        .await;
+
+    shutdown_all!(pool, tproxy_1, tproxy_2);
+}
