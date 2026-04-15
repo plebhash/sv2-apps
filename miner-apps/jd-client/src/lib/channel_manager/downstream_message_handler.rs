@@ -34,7 +34,6 @@ use crate::{
         ChannelManager, ChannelManagerChannel, SharesOrderedByDiff, FULL_EXTRANONCE_SIZE,
     },
     error::{self, JDCError, JDCErrorKind},
-    jd_mode::{get_jd_mode, JdMode},
     utils::{add_share_to_cache, create_close_channel_msg},
 };
 
@@ -121,14 +120,12 @@ impl RouteMessageTo<'_> {
                 }
             }
             RouteMessageTo::Upstream(message) => {
-                if get_jd_mode() != JdMode::SoloMining {
-                    let message_static = message.into_static();
-                    let sv2_frame: Sv2Frame = AnyMessage::Mining(message_static).try_into()?;
-                    channel_manager_channel
-                        .upstream_sender
-                        .send(sv2_frame)
-                        .await?;
-                }
+                let message_static = message.into_static();
+                let sv2_frame: Sv2Frame = AnyMessage::Mining(message_static).try_into()?;
+                channel_manager_channel
+                    .upstream_sender
+                    .send(sv2_frame)
+                    .await?;
             }
             RouteMessageTo::JobDeclarator(message) => {
                 channel_manager_channel
