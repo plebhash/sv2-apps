@@ -40,8 +40,8 @@ use tracing::{debug, info};
 
 use crate::{
     channel_manager::{downstream_message_handler::RouteMessageTo, ChannelManagerData},
-    config::ConfigJDCMode,
     error::JDCErrorKind,
+    jd_mode::JDMode,
 };
 
 pub(crate) type DownstreamMessage = (Mining<'static>, Option<Vec<Tlv>>);
@@ -89,7 +89,7 @@ pub fn get_setup_connection_message(
 /// Constructs a `SetupConnection` message for the Job Declarator (JDS).
 pub fn get_setup_connection_message_jds(
     proxy_address: &SocketAddr,
-    mode: &ConfigJDCMode,
+    mode: &JDMode,
 ) -> SetupConnection<'static> {
     let endpoint_host = proxy_address
         .ip()
@@ -114,7 +114,7 @@ pub fn get_setup_connection_message_jds(
         device_id,
     };
 
-    if matches!(mode, ConfigJDCMode::FullTemplate) {
+    if mode.is_config_full_template() {
         setup_connection.allow_full_template_mode();
     }
 

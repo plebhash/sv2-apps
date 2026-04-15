@@ -198,7 +198,7 @@ impl JobDeclaratorClientConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Default, PartialEq)]
+#[derive(Debug, Deserialize, Clone, Copy, Default, PartialEq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ConfigJDCMode {
     #[default]

@@ -15,7 +15,6 @@ use tracing::{error, info, warn};
 use crate::{
     channel_manager::{downstream_message_handler::RouteMessageTo, ChannelManager, DeclaredJob},
     error::{self, JDCError, JDCErrorKind},
-    jd_mode::{get_jd_mode, JdMode},
 };
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -63,7 +62,7 @@ impl HandleTemplateDistributionMessagesFromServerAsync for ChannelManager {
         let mut coinbase_outputs = deserialize_outputs(coinbase_outputs)
             .map_err(|_| JDCError::shutdown(JDCErrorKind::ChannelManagerHasBadCoinbaseOutputs))?;
 
-        if get_jd_mode() == JdMode::FullTemplate {
+        if self.mode.is_full_template() {
             let tx_data_request =
                 TemplateDistribution::RequestTransactionData(RequestTransactionData {
                     template_id: msg.template_id,
@@ -81,7 +80,7 @@ impl HandleTemplateDistributionMessagesFromServerAsync for ChannelManager {
             coinbase_outputs[0].value = Amount::from_sat(msg.coinbase_tx_value_remaining);
 
             let coinbase_only_token = if !msg.future_template
-                && get_jd_mode() == JdMode::CoinbaseOnly
+                && self.mode.is_coinbase_only()
                 && channel_manager_data.upstream_channel.is_some()
                 && channel_manager_data.last_new_prev_hash.is_some()
                 && channel_manager_data.job_factory.is_some()
@@ -440,7 +439,7 @@ impl HandleTemplateDistributionMessagesFromServerAsync for ChannelManager {
             (data.last_future_template.clone(), declare_job)
         });
 
-        if get_jd_mode() == JdMode::FullTemplate {
+        if self.mode.is_full_template() {
             if let Some(Some(job)) = declare_job {
                 let message = JobDeclaration::DeclareMiningJob(job);
 
@@ -467,7 +466,7 @@ impl HandleTemplateDistributionMessagesFromServerAsync for ChannelManager {
             if let Some(ref mut upstream_channel) = channel_manager_data.upstream_channel {
                 _ = upstream_channel.on_chain_tip_update(msg.clone().into());
 
-                if get_jd_mode() == JdMode::CoinbaseOnly
+                if self.mode.is_coinbase_only()
                     && channel_manager_data.job_factory.is_some()
                     && future_template.is_some()
                 {

@@ -5,57 +5,75 @@
 //!
 //! Modes are stored in a global [`AtomicU8`] to allow safe concurrent access
 //! across threads.
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc,
+};
 
-/// Operating modes for the Job Declarator.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JdMode {
-    /// Runs in Coinbase only mode.
-    CoinbaseOnly = 0,
-    /// Runs in Full template mode,
-    FullTemplate = 1,
-    /// Runs in solo mining mode,
-    SoloMining = 2,
+use crate::config::ConfigJDCMode;
+
+#[derive(Clone, Debug)]
+pub struct JDMode {
+    inner: Arc<AtomicU8>,
+    // Currently, how JDC works is the mode in config
+    // only gets activated once an upstream connection
+    // is made.
+    config_mode: ConfigJDCMode,
 }
 
-impl From<u8> for JdMode {
-    fn from(val: u8) -> Self {
-        match val {
-            0 => JdMode::CoinbaseOnly,
-            1 => JdMode::FullTemplate,
-            2 => JdMode::SoloMining,
-            _ => JdMode::SoloMining,
+impl JDMode {
+    pub fn new(config_mode: ConfigJDCMode) -> JDMode {
+        JDMode {
+            inner: Arc::new(AtomicU8::new(ConfigJDCMode::SoloMining as u8)),
+            config_mode,
         }
     }
-}
 
-impl From<u32> for JdMode {
-    fn from(val: u32) -> Self {
-        match val {
-            0 => JdMode::CoinbaseOnly,
-            1 => JdMode::FullTemplate,
-            2 => JdMode::SoloMining,
-            _ => JdMode::SoloMining,
+    /// This activates mode based on config file once
+    /// upstream connection is made.
+    pub fn activate(&self) {
+        match self.config_mode {
+            ConfigJDCMode::CoinbaseOnly => self.set_coinbase_only(),
+            ConfigJDCMode::FullTemplate => self.set_full_template(),
+            ConfigJDCMode::SoloMining => self.set_solo_mining(),
         }
     }
-}
 
-impl From<JdMode> for u8 {
-    fn from(mode: JdMode) -> Self {
-        mode as u8
+    pub fn set_solo_mining(&self) {
+        self.inner
+            .store(ConfigJDCMode::SoloMining as u8, Ordering::Relaxed);
     }
-}
 
-/// Global atomic variable storing the current JD mode.
-pub static JD_MODE: AtomicU8 = AtomicU8::new(JdMode::SoloMining as u8);
+    fn set_full_template(&self) {
+        self.inner
+            .store(ConfigJDCMode::FullTemplate as u8, Ordering::Relaxed);
+    }
 
-/// Updates the global JD mode.
-pub fn set_jd_mode(mode: JdMode) {
-    JD_MODE.store(mode as u8, Ordering::SeqCst);
-}
+    fn set_coinbase_only(&self) {
+        self.inner
+            .store(ConfigJDCMode::CoinbaseOnly as u8, Ordering::Relaxed);
+    }
 
-/// Returns the current global JD mode.
-pub fn get_jd_mode() -> JdMode {
-    JD_MODE.load(Ordering::SeqCst).into()
+    pub fn is_solo_mining(&self) -> bool {
+        let mode = self.inner.load(Ordering::Relaxed);
+        mode == ConfigJDCMode::SoloMining as u8
+    }
+
+    pub fn is_full_template(&self) -> bool {
+        let mode = self.inner.load(Ordering::Relaxed);
+        mode == ConfigJDCMode::FullTemplate as u8
+    }
+
+    pub fn is_coinbase_only(&self) -> bool {
+        let mode = self.inner.load(Ordering::Relaxed);
+        mode == ConfigJDCMode::CoinbaseOnly as u8
+    }
+
+    pub fn is_config_full_template(&self) -> bool {
+        self.config_mode == ConfigJDCMode::FullTemplate
+    }
+
+    pub fn is_config_coinbase_only(&self) -> bool {
+        self.config_mode == ConfigJDCMode::CoinbaseOnly
+    }
 }

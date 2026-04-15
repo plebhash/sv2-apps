@@ -8,9 +8,7 @@ use stratum_apps::stratum_core::{
 use tracing::{info, warn};
 
 use crate::{
-    config::ConfigJDCMode,
     error::{self, JDCError, JDCErrorKind},
-    jd_mode::{set_jd_mode, JdMode},
     job_declarator::JobDeclarator,
 };
 
@@ -32,16 +30,7 @@ impl HandleCommonMessagesFromServerAsync for JobDeclarator {
         _tlv_fields: Option<&[Tlv]>,
     ) -> Result<(), Self::Error> {
         info!("Received: {}", msg);
-        // Setting up JDMode from config, upon
-        // successful handshake.
-        let jd_mode = match self.mode {
-            ConfigJDCMode::CoinbaseOnly => JdMode::CoinbaseOnly,
-            ConfigJDCMode::FullTemplate => JdMode::FullTemplate,
-            ConfigJDCMode::SoloMining => JdMode::SoloMining,
-        };
-
-        set_jd_mode(jd_mode);
-
+        self.mode.activate();
         Ok(())
     }
 
