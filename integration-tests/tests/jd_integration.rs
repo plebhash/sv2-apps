@@ -59,6 +59,88 @@ async fn jds_should_not_panic_if_jdc_shutsdown() {
     shutdown_all!(jdc_1, pool);
 }
 
+// This test verifies that mode state is isolated per JDC instance.
+//
+// We start one JDC in solo mining mode (no upstreams) and then start another
+// JDC in full template mode (with upstream). The solo instance must not start
+// behaving like full-template mode after the second instance activates.
+#[tokio::test]
+async fn multiple_jdc_sessions() {
+    start_tracing();
+    let (tp, tp_addr) = start_template_provider(Some(1), DifficultyLevel::Low);
+    let (pool, pool_addr, jds_addr, _) =
+        start_pool_with_jds(tp.bitcoin_core(), vec![], vec![], false).await;
+
+    let (solo_tp_sniffer, solo_tp_sniffer_addr) =
+        start_sniffer("solo-jdc-tp", tp_addr, false, vec![], None);
+    let (solo_jdc, solo_jdc_addr, _) = start_jdc(
+        &[],
+        sv2_tp_config(solo_tp_sniffer_addr),
+        vec![],
+        vec![],
+        false,
+        Some(jd_client_sv2::config::ConfigJDCMode::SoloMining),
+    );
+    let _solo_downstream = MockDownstream::new(
+        solo_jdc_addr,
+        WithSetup::yes_with_defaults(Protocol::MiningProtocol, 0),
+    )
+    .start()
+    .await;
+
+    solo_tp_sniffer
+        .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+        .await;
+    solo_tp_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+        )
+        .await;
+    solo_tp_sniffer.clean_queue(MessageDirection::ToUpstream);
+    solo_tp_sniffer.clean_queue(MessageDirection::ToDownstream);
+
+    let (full_jds_sniffer, full_jds_sniffer_addr) =
+        start_sniffer("full-jdc-jds", jds_addr, false, vec![], None);
+    let (full_jdc, _full_jdc_addr, _) = start_jdc(
+        &[(pool_addr, full_jds_sniffer_addr)],
+        sv2_tp_config(tp_addr),
+        vec![],
+        vec![],
+        false,
+        Some(jd_client_sv2::config::ConfigJDCMode::FullTemplate),
+    );
+
+    full_jds_sniffer
+        .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+        .await;
+    full_jds_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_SETUP_CONNECTION_SUCCESS,
+        )
+        .await;
+
+    // Trigger post-start template updates; using two blocks reduces timing flakiness.
+    tp.generate_blocks(1);
+    tp.generate_blocks(1);
+
+    // RequestTransactionData is FullTemplate-only. If mode leaked process-wide,
+    // the solo JDC would emit this after the full-template JDC activates.
+    assert!(
+        solo_tp_sniffer
+            .assert_message_not_present(
+                MessageDirection::ToUpstream,
+                MESSAGE_TYPE_REQUEST_TRANSACTION_DATA,
+                std::time::Duration::from_secs(2),
+            )
+            .await,
+        "Solo-mode JDC should not request transaction data after another JDC activates full-template mode"
+    );
+
+    shutdown_all!(solo_jdc, full_jdc, pool);
+}
+
 // This test verifies that jd-client exchange SetupConnection messages with a Template Provider.
 //
 // Note that jd-client starts to exchange messages with the Template Provider after it has accepted
