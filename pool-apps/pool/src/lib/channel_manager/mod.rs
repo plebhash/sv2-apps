@@ -45,7 +45,7 @@ use jd_server_sv2::job_declarator::JobDeclarator;
 use crate::{
     config::PoolConfig,
     downstream::Downstream,
-    error::{self, Action, PoolError, PoolErrorKind, PoolResult},
+    error::{self, Action, LoopControl, PoolError, PoolErrorKind, PoolResult},
     utils::DownstreamMessage,
 };
 
@@ -108,6 +108,34 @@ pub struct ChannelManager {
 
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl ChannelManager {
+    fn handle_error_action(
+        &self,
+        context: &str,
+        e: &PoolError<error::ChannelManager>,
+        cancellation_token: &CancellationToken,
+    ) -> LoopControl {
+        match e.action {
+            Action::Log => {
+                warn!(error_kind = ?e.kind, "{context} returned a log-only error");
+                LoopControl::Continue
+            }
+            Action::Disconnect(downstream_id) => {
+                warn!(
+                    downstream_id,
+                    error_kind = ?e.kind,
+                    "{context} requested downstream disconnect"
+                );
+                self.remove_downstream(downstream_id);
+                LoopControl::Continue
+            }
+            Action::Shutdown => {
+                warn!(error_kind = ?e.kind, "{context} requested shutdown");
+                cancellation_token.cancel();
+                LoopControl::Break
+            }
+        }
+    }
+
     /// Constructor method used to instantiate the ChannelManager
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
@@ -394,34 +422,24 @@ impl ChannelManager {
                     res = cm_template.handle_template_provider_message() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Error handling Template Receiver message");
-                            match e.action {
-                                Action::Shutdown => {
-                                   cancellation_token.cancel();
-                                    break;
-                                }
-                                Action::Disconnect(downstream_id) => {
-                                    cm_downstreams.remove_downstream(downstream_id);
-                                }
-                                Action::Log => {
-                                    warn!("Log-only error from channel manager: {:?}", e.kind);
-                                }
+                            if let LoopControl::Break = cm.handle_error_action(
+                                "ChannelManager::handle_template_provider_message",
+                                &e,
+                                &cancellation_token,
+                            ) {
+                                break;
                             }
                         }
                     }
                     res = cm_downstreams.handle_downstream_mining_message() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Error handling Downstreams message");
-                            match e.action {
-                                Action::Shutdown => {
-                                   cancellation_token.cancel();
-                                    break;
-                                }
-                                Action::Disconnect(downstream_id) => {
-                                    cm_downstreams.remove_downstream(downstream_id);
-                                }
-                                Action::Log => {
-                                    warn!("Log-only error from channel manager: {:?}", e.kind);
-                                }
+                            if let LoopControl::Break = cm.handle_error_action(
+                                "ChannelManager::handle_downstream_mining_message",
+                                &e,
+                                &cancellation_token,
+                            ) {
+                                break;
                             }
                         }
                     }
