@@ -7,7 +7,7 @@
 
 use crate::{
     error,
-    error::{JDSError, JDSErrorKind, JDSResult},
+    error::{JDSError, JDSErrorKind, JDSResult, LoopControl},
     job_declarator::{
         downstream::Downstream,
         job_validation::{JobValidationEngine, SetCustomMiningJobResult},
@@ -37,7 +37,7 @@ use stratum_apps::{
     utils::types::{DownstreamId, JdToken},
 };
 use tokio::net::TcpListener;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // see https://github.com/stratum-mining/sv2-apps/issues/335
 const TEMPORARY_TIMEOUT_MULTIPLIER: u64 = 144;
@@ -147,6 +147,32 @@ impl JobDeclarator {
 
 /// Generic implementation for all [`JobValidationEngine`] types.
 impl JobDeclarator {
+    fn handle_error_action(
+        &self,
+        context: &str,
+        e: &JDSError<error::JobDeclarator>,
+    ) -> LoopControl {
+        match e.action {
+            error::Action::Log => {
+                warn!(error_kind = ?e.kind, "{context} returned a log-only error");
+                LoopControl::Continue
+            }
+            error::Action::Disconnect(downstream_id) => {
+                warn!(
+                    downstream_id,
+                    error_kind = ?e.kind,
+                    "{context} requested downstream disconnect"
+                );
+                self.cleanup_downstream(downstream_id);
+                LoopControl::Continue
+            }
+            error::Action::Shutdown => {
+                warn!(error_kind = ?e.kind, "{context} requested shutdown");
+                LoopControl::Break
+            }
+        }
+    }
+
     /// Binds a TCP listener and spawns the accept loop that creates a `Downstream`
     /// for every new Noise-encrypted connection.
     #[allow(clippy::too_many_arguments)]
@@ -280,12 +306,11 @@ impl JobDeclarator {
                     res = self.handle_jdp_message() => {
                         if let Err(e) = res {
                             error!(?e, "Error handling Job Declaration message");
-                            match e.action {
-                                error::Action::Disconnect(downstream_id) => {
-                                    self.cleanup_downstream(downstream_id);
-                                }
-                                error::Action::Shutdown => break,
-                                error::Action::Log => {}
+                            if let LoopControl::Break = self.handle_error_action(
+                                "JobDeclarator::handle_jdp_message",
+                                &e,
+                            ) {
+                                break;
                             }
                         }
                     }

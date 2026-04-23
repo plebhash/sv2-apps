@@ -8,7 +8,7 @@ use super::{
     DownstreamJobDeclarationMessage, JobDeclarationMessage, ALLOCATED_TOKEN_TIMEOUT_SECS,
     JANITOR_INTERVAL_SECS,
 };
-use crate::{error, error::JDSResult, io_task::spawn_io_tasks};
+use crate::{error, error::JDSResult, error::LoopControl, io_task::spawn_io_tasks};
 use async_channel::{unbounded, Receiver, Sender};
 use bitcoin_core_sv2::job_declaration_protocol::CancellationToken;
 use dashmap::DashMap;
@@ -73,6 +73,39 @@ pub struct Downstream {
 
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl Downstream {
+    fn handle_error_action(
+        &self,
+        context: &str,
+        e: &error::JDSError<error::Downstream>,
+    ) -> LoopControl {
+        match e.action {
+            error::Action::Log => {
+                warn!(
+                    downstream_id = self.downstream_id,
+                    error_kind = ?e.kind,
+                    "{context} returned a log-only error"
+                );
+                LoopControl::Continue
+            }
+            error::Action::Disconnect(_) => {
+                warn!(
+                    downstream_id = self.downstream_id,
+                    error_kind = ?e.kind,
+                    "{context} requested disconnect"
+                );
+                LoopControl::Break
+            }
+            error::Action::Shutdown => {
+                warn!(
+                    downstream_id = self.downstream_id,
+                    error_kind = ?e.kind,
+                    "{context} requested shutdown"
+                );
+                LoopControl::Break
+            }
+        }
+    }
+
     /// Creates a new [`Downstream`] and spawns its Noise I/O tasks.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -171,20 +204,22 @@ impl Downstream {
                     res = self_clone_1.handle_message_from_downstream() => {
                         if let Err(e) = res {
                             error!(?e, "Error handling downstream message for {downstream_id}");
-                            match e.action {
-                                error::Action::Disconnect(_) => break,
-                                error::Action::Shutdown => break,
-                                error::Action::Log => {}
+                            if let LoopControl::Break = self.handle_error_action(
+                                "Downstream::handle_message_from_downstream",
+                                &e,
+                            ) {
+                                break;
                             }
                         }
                     }
                     res = self_clone_2.handle_job_declarator_message() => {
                         if let Err(e) = res {
                             error!(?e, "Error handling job declarator message for {downstream_id}");
-                            match e.action {
-                                error::Action::Disconnect(_) => break,
-                                error::Action::Shutdown => break,
-                                error::Action::Log => {}
+                            if let LoopControl::Break = self.handle_error_action(
+                                "Downstream::handle_job_declarator_message",
+                                &e,
+                            ) {
+                                break;
                             }
                         }
                     }

@@ -48,6 +48,13 @@ pub enum Action {
     Shutdown,
 }
 
+/// Loop control signal for message-processing loops.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopControl {
+    Continue,
+    Break,
+}
+
 /// Marker type for errors originating from the [`crate::job_declarator::JobDeclarator`] layer.
 #[derive(Debug)]
 pub struct JobDeclarator;
