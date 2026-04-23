@@ -62,7 +62,7 @@ use crate::{
     channel_manager::downstream_message_handler::RouteMessageTo,
     config::JobDeclaratorClientConfig,
     downstream::Downstream,
-    error::{self, Action, JDCError, JDCErrorKind, JDCResult},
+    error::{self, Action, JDCError, JDCErrorKind, JDCResult, LoopControl},
     utils::{
         AtomicUpstreamState, DownstreamChannelJobId, DownstreamMessage, PendingChannelRequest,
         SharesOrderedByDiff, UpstreamState,
@@ -270,6 +270,49 @@ pub struct ChannelManager {
 
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl ChannelManager {
+    fn handle_error_action(
+        &self,
+        context: &str,
+        e: &JDCError<error::ChannelManager>,
+        cancellation_token: &CancellationToken,
+        fallback_token: &CancellationToken,
+    ) -> LoopControl {
+        match e.action {
+            Action::Log => {
+                warn!(
+                    error_kind = ?e.kind,
+                    "{context} returned a log-only error"
+                );
+                LoopControl::Continue
+            }
+            Action::Fallback => {
+                warn!(
+                    error_kind = ?e.kind,
+                    "{context} requested fallback"
+                );
+                fallback_token.cancel();
+                LoopControl::Break
+            }
+            Action::Shutdown => {
+                warn!(
+                    error_kind = ?e.kind,
+                    "{context} requested shutdown"
+                );
+                cancellation_token.cancel();
+                LoopControl::Break
+            }
+            Action::Disconnect(downstream_id) => {
+                warn!(
+                    downstream_id,
+                    error_kind = ?e.kind,
+                    "{context} requested downstream disconnect"
+                );
+                self.remove_downstream(downstream_id);
+                LoopControl::Continue
+            }
+        }
+    }
+
     /// Constructor method used to instantiate the Channel Manager
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
@@ -636,148 +679,52 @@ impl ChannelManager {
                     res = cm_jds.handle_jds_message() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Error handling JDS message");
-                            match e.action {
-                                Action::Log => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager JDS handler returned a log-only error"
-                                    );
-                                },
-                                Action::Fallback => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager JDS handler requested fallback"
-                                    );
-                                    fallback_token.cancel();
-                                    break;
-                                },
-                                Action::Shutdown => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager JDS handler requested shutdown"
-                                    );
-                                    cancellation_token.cancel();
-                                    break;
-                                },
-                                Action::Disconnect(downstream_id) => {
-                                    warn!(
-                                        downstream_id,
-                                        error_kind = ?e.kind,
-                                        "Channel manager JDS handler requested downstream disconnect"
-                                    );
-                                    cm_jds.remove_downstream(downstream_id);
-                                }
+                            if let LoopControl::Break = cm.handle_error_action(
+                                "ChannelManager::handle_jds_message",
+                                &e,
+                                &cancellation_token,
+                                &fallback_token,
+                            ) {
+                                break;
                             }
                         }
                     }
                     res = cm_pool.handle_pool_message_frame() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Error handling Pool message");
-                            match e.action {
-                                Action::Log => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager pool handler returned a log-only error"
-                                    );
-                                },
-                                Action::Fallback => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager pool handler requested fallback"
-                                    );
-                                    fallback_token.cancel();
-                                    break;
-                                },
-                                Action::Shutdown => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager pool handler requested shutdown"
-                                    );
-                                    cancellation_token.cancel();
-                                    break;
-                                }
-                                Action::Disconnect(downstream_id) => {
-                                    warn!(
-                                        downstream_id,
-                                        error_kind = ?e.kind,
-                                        "Channel manager pool handler requested downstream disconnect"
-                                    );
-                                    cm_pool.remove_downstream(downstream_id);
-                                }
+                            if let LoopControl::Break = cm.handle_error_action(
+                                "ChannelManager::handle_pool_message_frame",
+                                &e,
+                                &cancellation_token,
+                                &fallback_token,
+                            ) {
+                                break;
                             }
                         }
                     }
                     res = cm_template.handle_template_provider_message() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Error handling Template Receiver message");
-                            match e.action {
-                                Action::Log => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager template-receiver handler returned a log-only error"
-                                    );
-                                },
-                                Action::Fallback => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager template-receiver handler requested fallback"
-                                    );
-                                    fallback_token.cancel();
-                                    break;
-                                },
-                                Action::Shutdown => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager template-receiver handler requested shutdown"
-                                    );
-                                    cancellation_token.cancel();
-                                    break;
-                                }
-                                Action::Disconnect(downstream_id) => {
-                                    warn!(
-                                        downstream_id,
-                                        error_kind = ?e.kind,
-                                        "Channel manager template-receiver handler requested downstream disconnect"
-                                    );
-                                    cm_template.remove_downstream(downstream_id);
-                                }
+                            if let LoopControl::Break = cm.handle_error_action(
+                                "ChannelManager::handle_template_provider_message",
+                                &e,
+                                &cancellation_token,
+                                &fallback_token,
+                            ) {
+                                break;
                             }
                         }
                     }
                     res = cm_downstreams.handle_downstream_message() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Error handling Downstreams message");
-                            match e.action {
-                                Action::Log => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager downstream handler returned a log-only error"
-                                    );
-                                },
-                                Action::Fallback => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager downstream handler requested fallback"
-                                    );
-                                    fallback_token.cancel();
-                                    break;
-                                },
-                                Action::Shutdown => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Channel manager downstream handler requested shutdown"
-                                    );
-                                    cancellation_token.cancel();
-                                    break;
-                                }
-                                Action::Disconnect(downstream_id) => {
-                                    warn!(
-                                        downstream_id,
-                                        error_kind = ?e.kind,
-                                        "Channel manager downstream handler requested downstream disconnect"
-                                    );
-                                    cm_downstreams.remove_downstream(downstream_id);
-                                }
+                            if let LoopControl::Break = cm.handle_error_action(
+                                "ChannelManager::handle_downstream_message",
+                                &e,
+                                &cancellation_token,
+                                &fallback_token,
+                            ) {
+                                break;
                             }
                         }
                     }

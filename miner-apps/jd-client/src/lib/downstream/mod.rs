@@ -28,7 +28,7 @@ use bitcoin_core_sv2::template_distribution_protocol::CancellationToken;
 use tracing::{debug, error, warn};
 
 use crate::{
-    error::{self, Action, JDCError, JDCErrorKind, JDCResult},
+    error::{self, Action, JDCError, JDCErrorKind, JDCResult, LoopControl},
     io_task::spawn_io_tasks,
 };
 
@@ -90,6 +90,51 @@ pub struct Downstream {
 
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl Downstream {
+    fn handle_error_action(
+        &self,
+        context: &str,
+        e: &JDCError<error::Downstream>,
+        cancellation_token: &CancellationToken,
+    ) -> LoopControl {
+        match e.action {
+            Action::Log => {
+                warn!(
+                    downstream_id = self.downstream_id,
+                    error_kind = ?e.kind,
+                    "{context} returned a log-only error"
+                );
+                LoopControl::Continue
+            }
+            Action::Disconnect(_) => {
+                warn!(
+                    downstream_id = self.downstream_id,
+                    error_kind = ?e.kind,
+                    "{context} requested disconnect; cancelling downstream token"
+                );
+                self.downstream_cancellation_token.cancel();
+                LoopControl::Break
+            }
+            Action::Shutdown => {
+                warn!(
+                    downstream_id = self.downstream_id,
+                    error_kind = ?e.kind,
+                    "{context} requested shutdown; cancelling global token"
+                );
+                cancellation_token.cancel();
+                LoopControl::Break
+            }
+            other => {
+                warn!(
+                    downstream_id = self.downstream_id,
+                    action = ?other,
+                    error_kind = ?e.kind,
+                    "{context} returned an unhandled action"
+                );
+                LoopControl::Continue
+            }
+        }
+    }
+
     /// Creates a new [`Downstream`] instance and spawns the necessary I/O tasks.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -171,39 +216,11 @@ impl Downstream {
             // before we break the TCP connection
             tokio::time::sleep(Duration::from_secs(1)).await;
 
-            match e.action {
-                Action::Log => {
-                    warn!(
-                        downstream_id = self.downstream_id,
-                        error_kind = ?e.kind,
-                        "Downstream setup failed with a log-only error"
-                    );
-                }
-                Action::Disconnect(_) => {
-                    warn!(
-                        downstream_id = self.downstream_id,
-                        error_kind = ?e.kind,
-                        "Downstream setup requested disconnect; cancelling downstream token"
-                    );
-                    self.downstream_cancellation_token.cancel();
-                }
-                Action::Shutdown => {
-                    warn!(
-                        downstream_id = self.downstream_id,
-                        error_kind = ?e.kind,
-                        "Downstream setup requested shutdown; cancelling global token"
-                    );
-                    cancellation_token.cancel();
-                }
-                other => {
-                    warn!(
-                        downstream_id = self.downstream_id,
-                        action = ?other,
-                        error_kind = ?e.kind,
-                        "Downstream setup returned an unhandled action"
-                    );
-                }
-            }
+            _ = self.handle_error_action(
+                "Downstream::setup_connection_with_downstream",
+                &e,
+                &cancellation_token,
+            );
             remove_downstream(self.downstream_id);
             fallback_handler.done();
             return;
@@ -226,80 +243,24 @@ impl Downstream {
                     res = self_clone_1.handle_downstream_message() => {
                         if let Err(e) = res {
                             error!(?e, "Error handling downstream message for {downstream_id}");
-                            match e.action {
-                                Action::Log => {
-                                    warn!(
-                                        downstream_id,
-                                        error_kind = ?e.kind,
-                                        "Downstream message handler returned a log-only error"
-                                    );
-                                },
-                                Action::Disconnect(_) => {
-                                    warn!(
-                                        downstream_id,
-                                        error_kind = ?e.kind,
-                                        "Downstream message handler requested disconnect; cancelling downstream token"
-                                    );
-                                    self.downstream_cancellation_token.cancel();
-                                    break;
-                                },
-                                Action::Shutdown => {
-                                    warn!(
-                                        downstream_id,
-                                        error_kind = ?e.kind,
-                                        "Downstream message handler requested shutdown; cancelling global token"
-                                    );
-                                    cancellation_token.cancel();
-                                    break;
-                                }
-                                other => {
-                                    warn!(
-                                        downstream_id,
-                                        action = ?other,
-                                        error_kind = ?e.kind,
-                                        "Downstream message handler returned an unhandled action"
-                                    );
-                                }
+                            if let LoopControl::Break = self.handle_error_action(
+                                "Downstream::handle_downstream_message",
+                                &e,
+                                &cancellation_token,
+                            ) {
+                                break;
                             }
                         }
                     }
                     res = self_clone_2.handle_channel_manager_message() => {
                         if let Err(e) = res {
                             error!(?e, "Error handling channel manager message for {downstream_id}");
-                            match e.action {
-                                Action::Log => {
-                                    warn!(
-                                        downstream_id,
-                                        error_kind = ?e.kind,
-                                        "Channel manager message handler returned a log-only error"
-                                    );
-                                },
-                                Action::Disconnect(_) => {
-                                    warn!(
-                                        downstream_id,
-                                        error_kind = ?e.kind,
-                                        "Channel manager message handler requested downstream disconnect"
-                                    );
-                                    self.downstream_cancellation_token.cancel();
-                                    break;
-                                },
-                                Action::Shutdown => {
-                                    warn!(
-                                        downstream_id,
-                                        error_kind = ?e.kind,
-                                        "Channel manager message handler requested global shutdown"
-                                    );
-                                    cancellation_token.cancel();
-                                    break;
-                                }
-                                other => {
-                                    warn!(
-                                        downstream_id,
-                                        action = ?other,
-                                        error_kind = ?e.kind,
-                                        "Channel manager message handler returned an unhandled action"
-                                    );
-                                }
+                            if let LoopControl::Break = self.handle_error_action(
+                                "Downstream::handle_channel_manager_message",
+                                &e,
+                                &cancellation_token,
+                            ) {
+                                break;
                             }
                         }
                     }

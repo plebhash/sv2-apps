@@ -31,7 +31,7 @@ use tokio::net::TcpStream;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    error::{self, Action, JDCError, JDCErrorKind, JDCResult},
+    error::{self, Action, JDCError, JDCErrorKind, JDCResult, LoopControl},
     io_task::spawn_io_tasks,
     utils::{get_setup_connection_message, UpstreamEntry},
 };
@@ -71,6 +71,47 @@ pub struct Upstream {
 
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl Upstream {
+    fn handle_error_action(
+        context: &str,
+        e: &JDCError<error::Upstream>,
+        cancellation_token: &CancellationToken,
+        fallback_token: &CancellationToken,
+    ) -> LoopControl {
+        match e.action {
+            Action::Log => {
+                warn!(
+                    error_kind = ?e.kind,
+                    "{context} returned a log-only error"
+                );
+                LoopControl::Continue
+            }
+            Action::Fallback => {
+                warn!(
+                    error_kind = ?e.kind,
+                    "{context} requested fallback"
+                );
+                fallback_token.cancel();
+                LoopControl::Break
+            }
+            Action::Shutdown => {
+                warn!(
+                    error_kind = ?e.kind,
+                    "{context} requested shutdown"
+                );
+                cancellation_token.cancel();
+                LoopControl::Break
+            }
+            other => {
+                warn!(
+                    action = ?other,
+                    error_kind = ?e.kind,
+                    "{context} returned an unhandled action"
+                );
+                LoopControl::Continue
+            }
+        }
+    }
+
     /// Create a new [`Upstream`] connection to the given address.
     ///
     /// - Resolves hostname to IP address via DNS (if not already an IP)
@@ -262,33 +303,16 @@ impl Upstream {
         fallback_coordinator: FallbackCoordinator,
         task_manager: Arc<TaskManager>,
     ) {
+        let setup_fallback_token = fallback_coordinator.token();
         if let Err(e) = self.setup_connection(min_version, max_version).await {
             error!(error = ?e, "Upstream: connection setup failed.");
-            match e.action {
-                Action::Log => {
-                    warn!(error_kind = ?e.kind, "Upstream setup returned a log-only error");
-                }
-                Action::Fallback => {
-                    warn!(
-                        error_kind = ?e.kind,
-                        "Upstream setup requested fallback; cancelling fallback token"
-                    );
-                    fallback_coordinator.token().cancel();
-                }
-                Action::Shutdown => {
-                    warn!(
-                        error_kind = ?e.kind,
-                        "Upstream setup requested shutdown; cancelling global token"
-                    );
-                    cancellation_token.cancel();
-                }
-                other => {
-                    warn!(
-                        action = ?other,
-                        error_kind = ?e.kind,
-                        "Upstream setup returned an unhandled action"
-                    );
-                }
+            if let LoopControl::Break = Self::handle_error_action(
+                "Upstream::setup_connection",
+                &e,
+                &cancellation_token,
+                &setup_fallback_token,
+            ) {
+                return;
             }
             return;
         }
@@ -316,72 +340,26 @@ impl Upstream {
                     res = self_clone_1.handle_pool_message_frame() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Upstream: error handling pool message.");
-                            match e.action {
-                                Action::Log => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Upstream pool-message handler returned a log-only error"
-                                    );
-                                },
-                                Action::Fallback => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Upstream pool-message handler requested fallback"
-                                    );
-                                    fallback_token.cancel();
-                                    break;
-                                },
-                                Action::Shutdown => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Upstream pool-message handler requested shutdown"
-                                    );
-                                    cancellation_token.cancel();
-                                    break;
-                                }
-                                other => {
-                                    warn!(
-                                        action = ?other,
-                                        error_kind = ?e.kind,
-                                        "Upstream pool-message handler returned an unhandled action"
-                                    );
-                                }
+                            if let LoopControl::Break = Self::handle_error_action(
+                                "Upstream::handle_pool_message_frame",
+                                &e,
+                                &cancellation_token,
+                                &fallback_token,
+                            ) {
+                                break;
                             }
                         }
                     }
                     res = self_clone_2.handle_channel_manager_message_frame() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Upstream: error handling channel manager message.");
-                            match e.action {
-                                Action::Log => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Upstream channel-manager handler returned a log-only error"
-                                    );
-                                },
-                                Action::Fallback => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Upstream channel-manager handler requested fallback"
-                                    );
-                                    fallback_token.cancel();
-                                    break;
-                                },
-                                Action::Shutdown => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Upstream channel-manager handler requested shutdown"
-                                    );
-                                    cancellation_token.cancel();
-                                    break;
-                                }
-                                other => {
-                                    warn!(
-                                        action = ?other,
-                                        error_kind = ?e.kind,
-                                        "Upstream channel-manager handler returned an unhandled action"
-                                    );
-                                }
+                            if let LoopControl::Break = Self::handle_error_action(
+                                "Upstream::handle_channel_manager_message_frame",
+                                &e,
+                                &cancellation_token,
+                                &fallback_token,
+                            ) {
+                                break;
                             }
                         }
                     }

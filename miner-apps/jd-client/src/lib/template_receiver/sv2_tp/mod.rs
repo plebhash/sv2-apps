@@ -35,7 +35,7 @@ use tokio::net::TcpStream;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    error::{self, Action, JDCError, JDCErrorKind, JDCResult},
+    error::{self, Action, JDCError, JDCErrorKind, JDCResult, LoopControl},
     io_task::spawn_io_tasks,
     utils::get_setup_connection_message_tp,
 };
@@ -81,6 +81,38 @@ pub struct Sv2Tp {
 
 #[cfg_attr(not(test), hotpath::measure_all)]
 impl Sv2Tp {
+    fn handle_error_action(
+        context: &str,
+        e: &JDCError<error::TemplateProvider>,
+        cancellation_token: &CancellationToken,
+    ) -> LoopControl {
+        match e.action {
+            Action::Log => {
+                warn!(
+                    error_kind = ?e.kind,
+                    "{context} returned a log-only error"
+                );
+                LoopControl::Continue
+            }
+            Action::Shutdown => {
+                warn!(
+                    error_kind = ?e.kind,
+                    "{context} requested shutdown"
+                );
+                cancellation_token.cancel();
+                LoopControl::Break
+            }
+            other => {
+                warn!(
+                    action = ?other,
+                    error_kind = ?e.kind,
+                    "{context} returned an unhandled action"
+                );
+                LoopControl::Continue
+            }
+        }
+    }
+
     /// Establish a new connection to a Template Provider.
     ///
     /// - Opens a TCP connection
@@ -207,56 +239,24 @@ impl Sv2Tp {
                     res = self_clone_1.handle_template_provider_message() => {
                         if let Err(e) = res {
                             error!("TemplateReceiver template provider handler failed: {e:?}");
-                            match e.action {
-                                Action::Log => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Template receiver provider handler returned a log-only error"
-                                    );
-                                },
-                                Action::Shutdown => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Template receiver provider handler requested shutdown"
-                                    );
-                                    cancellation_token.cancel();
-                                    break;
-                                }
-                                other => {
-                                    warn!(
-                                        action = ?other,
-                                        error_kind = ?e.kind,
-                                        "Template receiver provider handler returned an unhandled action"
-                                    );
-                                }
+                            if let LoopControl::Break = Self::handle_error_action(
+                                "TemplateReceiver::handle_template_provider_message",
+                                &e,
+                                &cancellation_token,
+                            ) {
+                                break;
                             }
                         }
                     }
                     res = self_clone_2.handle_channel_manager_message() => {
                         if let Err(e) = res {
                             error!("TemplateReceiver channel manager handler failed: {e:?}");
-                            match e.action {
-                                Action::Log => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Template receiver channel-manager handler returned a log-only error"
-                                    );
-                                },
-                                Action::Shutdown => {
-                                    warn!(
-                                        error_kind = ?e.kind,
-                                        "Template receiver channel-manager handler requested shutdown"
-                                    );
-                                    cancellation_token.cancel();
-                                    break;
-                                }
-                                other => {
-                                    warn!(
-                                        action = ?other,
-                                        error_kind = ?e.kind,
-                                        "Template receiver channel-manager handler returned an unhandled action"
-                                    );
-                                }
+                            if let LoopControl::Break = Self::handle_error_action(
+                                "TemplateReceiver::handle_channel_manager_message",
+                                &e,
+                                &cancellation_token,
+                            ) {
+                                break;
                             }
                         }
                     },
