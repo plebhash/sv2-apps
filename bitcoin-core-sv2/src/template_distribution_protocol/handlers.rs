@@ -17,34 +17,18 @@ impl BitcoinCoreSv2TDP {
     ) -> Result<(), BitcoinCoreSv2TDPError> {
         tracing::debug!("handle_coinbase_output_constraints() called");
 
-        // break the loop in monitor_ipc_templates() and spawn a new one at the end of this function
-        // that's because we no longer care about templates created under previous constraints
+        // Break the loop in monitor_ipc_templates() and spawn a new one after bootstrapping the
+        // new template IPC client. We no longer care about templates created under previous
+        // constraints for future template monitoring.
         tracing::debug!("Cancelling template_ipc_client_cancellation_token");
         self.template_ipc_client_cancellation_token.cancel();
 
-        tracing::debug!("Creating new template IPC client with new constraints");
-        let template_ipc_client = self
-            .new_template_ipc_client(
-                coinbase_output_constraints.coinbase_output_max_additional_size,
-                coinbase_output_constraints.coinbase_output_max_additional_sigops,
-            )
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to create new template IPC client: {:?}", e);
-                e
-            })?;
-
-        {
-            let mut current_template_ipc_client_guard =
-                self.current_template_ipc_client.borrow_mut();
-            *current_template_ipc_client_guard = Some(template_ipc_client);
-        }
-        tracing::debug!("Updated current_template_ipc_client");
-
-        self.template_ipc_client_cancellation_token = CancellationToken::new();
-        tracing::debug!("Created new template_ipc_client_cancellation_token");
-
-        // Wait for the old monitor_ipc_templates task to finish before spawning a new one
+        // Wait for the old monitor_ipc_templates task to finish before bootstrapping a new
+        // template IPC client.
+        //
+        // This keeps template monitoring scoped to one coinbase-output constraint set at a time:
+        // the old monitor interrupts its own in-flight waitNext request and exits before the
+        // replacement client is published and monitored.
         tracing::debug!("Waiting for current monitor_ipc_templates() task to finish");
         let handle = self.monitor_ipc_templates_handle.borrow_mut().take();
         #[allow(clippy::collapsible_if)]
@@ -54,6 +38,19 @@ impl BitcoinCoreSv2TDP {
                 return Err(BitcoinCoreSv2TDPError::FailedToWaitForMonitorIpcTemplatesTask);
             }
         }
+
+        self.template_ipc_client_cancellation_token = CancellationToken::new();
+        tracing::debug!("Created new template_ipc_client_cancellation_token");
+
+        tracing::debug!("Bootstrapping new template IPC client with new constraints");
+        self.bootstrap_template_ipc_client_from_coinbase_output_constraints(
+            coinbase_output_constraints,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to bootstrap new template IPC client: {:?}", e);
+            e
+        })?;
 
         tracing::debug!("Spawning new monitor_ipc_templates() task");
         self.monitor_ipc_templates();

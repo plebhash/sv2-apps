@@ -1,6 +1,5 @@
 use crate::template_distribution_protocol::BitcoinCoreSv2TDP;
 
-use std::collections::HashSet;
 use stratum_core::parsers_sv2::TemplateDistribution;
 use tracing::info;
 
@@ -35,13 +34,23 @@ impl BitcoinCoreSv2TDP {
                 }
             };
 
+            let mut template_ipc_client = match self_clone.current_template_ipc_client() {
+                Ok(template_ipc_client) => template_ipc_client,
+                Err(e) => {
+                    tracing::error!("Failed to get current template IPC client: {:?}", e);
+                    tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
+                    self_clone.global_cancellation_token.cancel();
+                    return;
+                }
+            };
+
             tracing::debug!("monitor_ipc_templates() entering main loop");
             loop {
                 tracing::debug!("monitor_ipc_templates() loop iteration start");
 
                 // Create a new request for each iteration
                 let wait_next_request = match self_clone
-                    .new_wait_next_request(blocking_thread_ipc_client.clone())
+                    .new_wait_next_request(&template_ipc_client, blocking_thread_ipc_client.clone())
                     .await
                 {
                     Ok(wait_next_request) => wait_next_request,
@@ -56,13 +65,15 @@ impl BitcoinCoreSv2TDP {
                 tokio::select! {
                     _ = self_clone.global_cancellation_token.cancelled() => {
                         tracing::debug!("Interrupting waitNext request");
-                        self_clone.interrupt_wait_request().await.expect("Failed to interrupt waitNext request");
+                        if let Err(e) = self_clone.interrupt_wait_request(&template_ipc_client).await {
+                            tracing::error!("Failed to interrupt waitNext request during shutdown: {:?}", e);
+                        }
                         tracing::warn!("Exiting mempool change monitoring loop");
                         break;
                     }
                     _ = self_clone.template_ipc_client_cancellation_token.cancelled() => {
                         tracing::debug!("Interrupting waitNext request");
-                        if let Err(e) = self_clone.interrupt_wait_request().await {
+                        if let Err(e) = self_clone.interrupt_wait_request(&template_ipc_client).await {
                             tracing::error!("Failed to interrupt waitNext request: {:?}", e);
                             tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
                             self_clone.global_cancellation_token.cancel();
@@ -106,14 +117,11 @@ impl BitcoinCoreSv2TDP {
                                     }
                                 };
 
-                                {
-                                    let mut current_template_ipc_client_guard = self_clone.current_template_ipc_client.borrow_mut();
-                                    *current_template_ipc_client_guard = Some(new_template_ipc_client);
-                                    tracing::debug!("Updated current_template_ipc_client with new template");
-                                }
-
                                 tracing::debug!("Fetching new template data...");
-                                let new_template_data = match self_clone.fetch_template_data(blocking_thread_ipc_client.clone()).await {
+                                let new_template_data = match self_clone.fetch_template_data(
+                                    new_template_ipc_client.clone(),
+                                    blocking_thread_ipc_client.clone(),
+                                ).await {
                                     Ok(new_template_data) => new_template_data,
                                     Err(e) => {
                                         tracing::error!("Failed to fetch template data: {:?}", e);
@@ -137,66 +145,32 @@ impl BitcoinCoreSv2TDP {
                                 if new_prev_hash != current_prev_hash {
                                     info!("⛓️ Chain Tip changed! New prev_hash: {}", new_prev_hash);
                                     tracing::debug!("CHAIN TIP CHANGE DETECTED - old: {}, new: {}", current_prev_hash, new_prev_hash);
-                                    self_clone.current_prev_hash.replace(Some(new_prev_hash));
 
-                                    // save stale template ids, cleanup and save the new template data
-                                    let stale_template_ids = {
-                                        let mut template_data_guard = match self_clone.template_data.write() {
-                                            Ok(guard) => guard,
-                                            Err(e) => {
-                                                tracing::error!("Failed to acquire write lock on template_data: {:?}", e);
-                                                tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                                                self_clone.global_cancellation_token.cancel();
-                                                break;
-                                            }
-                                        };
-
-                                        let stale_template_ids: HashSet<_> = template_data_guard.clone().into_keys().collect();
-
-                                        // save the new template data while we still have the lock
-                                        tracing::debug!("Saving new template data with template_id: {}", new_template_data.get_template_id());
-                                        template_data_guard.insert(new_template_data.get_template_id(), new_template_data.clone());
-
-                                        stale_template_ids
+                                    let stale_template_ids = match self_clone.current_template_ids() {
+                                        Ok(stale_template_ids) => stale_template_ids,
+                                        Err(e) => {
+                                            tracing::error!("Failed to collect stale template ids: {:?}", e);
+                                            tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
+                                            self_clone.global_cancellation_token.cancel();
+                                            break;
+                                        }
                                     };
+
+                                    match self_clone.publish_template(new_template_data, true, true, false).await {
+                                        Ok(()) => {
+                                            self_clone.set_current_template_ipc_client(new_template_ipc_client.clone());
+                                            template_ipc_client = new_template_ipc_client;
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Failed to publish chain-tip template: {:?}", e);
+                                            tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
+                                            self_clone.global_cancellation_token.cancel();
+                                            break;
+                                        }
+                                    }
 
                                     // process the stale template data after 10s
                                     self_clone.process_stale_template_data(stale_template_ids).await;
-
-                                    // send the future NewTemplate message
-                                    let future_template = match new_template_data.get_new_template_message(true) {
-                                        Ok(future_template) => future_template,
-                                        Err(e) => {
-                                            tracing::error!("Failed to get future template message: {:?}", e);
-                                            tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                                            self_clone.global_cancellation_token.cancel();
-                                            break;
-                                        }
-                                    };
-                                    tracing::debug!("Sending NewTemplate (future=true) after chain tip change");
-
-                                    if let Err(e) = self_clone.outgoing_messages.send(TemplateDistribution::NewTemplate(future_template.clone())).await {
-                                        tracing::error!("Failed to send future NewTemplate message: {:?}", e);
-                                        tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                                        self_clone.global_cancellation_token.cancel();
-                                        break;
-                                    }
-
-                                    // send the SetNewPrevHash message
-                                    let set_new_prev_hash = new_template_data.get_set_new_prev_hash_message();
-                                    tracing::debug!("Sending SetNewPrevHash after chain tip change");
-
-                                    match self_clone.outgoing_messages.send(TemplateDistribution::SetNewPrevHash(set_new_prev_hash.clone())).await {
-                                        Ok(_) => {
-                                            tracing::debug!("Successfully sent SetNewPrevHash");
-                                        },
-                                        Err(e) => {
-                                            tracing::error!("Failed to send SetNewPrevHash message: {:?}", e);
-                                            tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                                            self_clone.global_cancellation_token.cancel();
-                                            break;
-                                        }
-                                    }
                                 } else {
                                     // check if the minimum interval has been reached
                                     if let Some(last_sent_template_instant) = self_clone.last_sent_template_instant {
@@ -213,43 +187,21 @@ impl BitcoinCoreSv2TDP {
                                         }
                                     }
 
-                                    self_clone.last_sent_template_instant = Some(std::time::Instant::now());
-
                                     info!("💹 Mempool fees increased! Sending NewTemplate message.");
                                     tracing::debug!("MEMPOOL FEE CHANGE DETECTED - sending non-future template");
 
-                                    // send the non-future NewTemplate message
-                                    let non_future_template = match new_template_data.get_new_template_message(false) {
-                                        Ok(non_future_template) => non_future_template,
+                                    match self_clone.publish_template(new_template_data, false, false, true).await {
+                                        Ok(()) => {
+                                            self_clone.set_current_template_ipc_client(new_template_ipc_client.clone());
+                                            template_ipc_client = new_template_ipc_client;
+                                        }
                                         Err(e) => {
-                                            tracing::error!("Failed to get non-future template message: {:?}", e);
+                                            tracing::error!("Failed to publish fee-update template: {:?}", e);
                                             tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
                                             self_clone.global_cancellation_token.cancel();
                                             break;
                                         }
-                                    };
-                                    tracing::debug!("Sending NewTemplate (future=false) after fee change");
-
-                                    if let Err(e) = self_clone.outgoing_messages.send(TemplateDistribution::NewTemplate(non_future_template.clone())).await {
-                                        tracing::error!("Failed to send future NewTemplate message: {:?}", e);
-                                        tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                                        self_clone.global_cancellation_token.cancel();
-                                        break;
                                     }
-
-                                    // save the new template data
-                                    tracing::debug!("Saving template data for template_id: {}", new_template_data.get_template_id());
-                                    let mut template_data_guard = match self_clone.template_data.write() {
-                                        Ok(guard) => guard,
-                                        Err(e) => {
-                                            tracing::error!("Failed to acquire write lock on template_data: {:?}", e);
-                                            tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                                            self_clone.global_cancellation_token.cancel();
-                                            break;
-                                        }
-                                    };
-                                    template_data_guard.insert(new_template_data.get_template_id(), new_template_data.clone());
-
                                 }
                             }
                             Err(e) => {

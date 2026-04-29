@@ -28,6 +28,7 @@ use stratum_core::{
     binary_sv2::U256,
     bitcoin::{Transaction, block::Header, consensus::deserialize},
     parsers_sv2::TemplateDistribution,
+    template_distribution_sv2::CoinbaseOutputConstraints,
 };
 
 use std::sync::RwLock;
@@ -212,24 +213,28 @@ impl BitcoinCoreSv2TDP {
                                 coinbase_output_constraints.coinbase_output_max_additional_size,
                                 coinbase_output_constraints.coinbase_output_max_additional_sigops);
 
-                            let template_ipc_client = match self.new_template_ipc_client(coinbase_output_constraints.coinbase_output_max_additional_size, coinbase_output_constraints.coinbase_output_max_additional_sigops).await {
-                                Ok(template_ipc_client) => {
-                                    tracing::debug!("Successfully created initial template IPC client");
-                                    template_ipc_client
-                                },
+                            match self
+                                .bootstrap_template_ipc_client_from_coinbase_output_constraints(
+                                    coinbase_output_constraints,
+                                )
+                                .await
+                            {
+                                Ok(()) => {
+                                    tracing::debug!(
+                                        "Successfully bootstrapped initial template IPC client"
+                                    );
+                                    break;
+                                }
                                 Err(e) => {
-                                    tracing::error!("Failed to create new template IPC client: {:?}", e);
+                                    tracing::error!(
+                                        "Failed to bootstrap initial template IPC client: {:?}",
+                                        e
+                                    );
                                     tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
                                     self.global_cancellation_token.cancel();
                                     return;
                                 }
-                            };
-
-                            let mut current_template_ipc_client_guard = self.current_template_ipc_client.borrow_mut();
-                            *current_template_ipc_client_guard = Some(template_ipc_client);
-                            tracing::debug!("Set current_template_ipc_client to initial template");
-
-                            break;
+                            }
                         }
                         _ => {
                             tracing::warn!("Received unexpected message: {:?}", message);
@@ -239,113 +244,6 @@ impl BitcoinCoreSv2TDP {
                     }
                 }
             }
-        }
-
-        // bootstrap the first template
-        {
-            tracing::debug!("Bootstrapping first template...");
-            let template_data = match self
-                .fetch_template_data(self.thread_ipc_client.clone())
-                .await
-            {
-                Ok(template_data) => {
-                    tracing::debug!(
-                        "Successfully fetched initial template data - template_id: {}",
-                        template_data.get_template_id()
-                    );
-                    template_data
-                }
-                Err(e) => {
-                    tracing::error!("Failed to fetch template data: {:?}", e);
-                    tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                    self.global_cancellation_token.cancel();
-                    return;
-                }
-            };
-
-            // send the future NewTemplate message
-            let future_template = match template_data.get_new_template_message(true) {
-                Ok(future_template) => future_template,
-                Err(e) => {
-                    tracing::error!("Failed to get future template message: {:?}", e);
-                    tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                    self.global_cancellation_token.cancel();
-                    return;
-                }
-            };
-
-            tracing::debug!(
-                "Sending initial NewTemplate (future=true) with template_id: {}",
-                template_data.get_template_id()
-            );
-
-            match self
-                .outgoing_messages
-                .send(TemplateDistribution::NewTemplate(future_template.clone()))
-                .await
-            {
-                Ok(_) => {
-                    tracing::debug!("Successfully sent initial NewTemplate message");
-                }
-                Err(e) => {
-                    tracing::error!("Failed to send future template message: {:?}", e);
-                    tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                    self.global_cancellation_token.cancel();
-                    return;
-                }
-            }
-
-            // send the SetNewPrevHash message
-            let set_new_prev_hash = template_data.get_set_new_prev_hash_message();
-            tracing::debug!(
-                "Sending initial SetNewPrevHash with prev_hash: {}",
-                template_data.get_prev_hash()
-            );
-
-            match self
-                .outgoing_messages
-                .send(TemplateDistribution::SetNewPrevHash(
-                    set_new_prev_hash.clone(),
-                ))
-                .await
-            {
-                Ok(_) => {
-                    tracing::debug!("Successfully sent initial SetNewPrevHash message");
-                }
-                Err(e) => {
-                    tracing::error!("Failed to send set new prev hash message: {:?}", e);
-                    tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                    self.global_cancellation_token.cancel();
-                    return;
-                }
-            }
-
-            // save the template data
-            let mut template_data_guard = match self.template_data.write() {
-                Ok(guard) => guard,
-                Err(e) => {
-                    tracing::error!("Failed to acquire write lock on template_data: {:?}", e);
-                    tracing::warn!("Terminating Sv2 Bitcoin Core IPC Connection");
-                    self.global_cancellation_token.cancel();
-                    return;
-                }
-            };
-            template_data_guard.insert(template_data.get_template_id(), template_data.clone());
-            tracing::debug!(
-                "Saved initial template data with template_id: {}",
-                template_data.get_template_id()
-            );
-
-            // save the current prev hash
-            self.current_prev_hash
-                .replace(Some(template_data.get_prev_hash()));
-            tracing::debug!(
-                "Set current_prev_hash to: {}",
-                template_data.get_prev_hash()
-            );
-
-            // save last_sent_template_instant
-            self.last_sent_template_instant = Some(std::time::Instant::now());
         }
 
         // spawn the monitoring tasks
@@ -382,6 +280,7 @@ impl BitcoinCoreSv2TDP {
 
     async fn fetch_template_data(
         &self,
+        template_ipc_client: BlockTemplateIpcClient,
         thread_ipc_client: ThreadIpcClient,
     ) -> Result<TemplateData, BitcoinCoreSv2TDPError> {
         tracing::debug!("Fetching template data over IPC");
@@ -390,17 +289,6 @@ impl BitcoinCoreSv2TDP {
             "fetch_template_data() - assigned template_id: {}",
             template_id
         );
-
-        // clone the current template IPC client so it's stored in the template data HashMap
-        // this is important in case we need to submit a solution relative to this specific template
-        // by the time self.current_template_ipc_client might have already changed
-        let template_ipc_client = match self.current_template_ipc_client.borrow().clone() {
-            Some(template_ipc_client) => template_ipc_client,
-            None => {
-                tracing::error!("Template IPC client not found");
-                return Err(BitcoinCoreSv2TDPError::TemplateIpcClientNotFound);
-            }
-        };
 
         let mut template_header_request = template_ipc_client.get_block_header_request();
         template_header_request
@@ -487,15 +375,138 @@ impl BitcoinCoreSv2TDP {
         Ok(thread_ipc_client)
     }
 
-    async fn new_template_ipc_client(
+    fn set_current_template_ipc_client(&self, template_ipc_client: BlockTemplateIpcClient) {
+        let mut current_template_ipc_client_guard = self.current_template_ipc_client.borrow_mut();
+        *current_template_ipc_client_guard = Some(template_ipc_client);
+        tracing::debug!("Updated current_template_ipc_client");
+    }
+
+    fn current_template_ipc_client(
         &self,
-        coinbase_output_max_additional_size: u32,
-        coinbase_output_max_additional_sigops: u16,
     ) -> Result<BlockTemplateIpcClient, BitcoinCoreSv2TDPError> {
+        match self.current_template_ipc_client.borrow().clone() {
+            Some(template_ipc_client) => Ok(template_ipc_client),
+            None => {
+                tracing::error!("Template IPC client not found");
+                Err(BitcoinCoreSv2TDPError::TemplateIpcClientNotFound)
+            }
+        }
+    }
+
+    fn store_template_data(
+        &self,
+        template_data: &TemplateData,
+    ) -> Result<(), BitcoinCoreSv2TDPError> {
+        let mut template_data_guard = self.template_data.write().map_err(|e| {
+            tracing::error!("Failed to acquire write lock on template_data: {:?}", e);
+            BitcoinCoreSv2TDPError::FailedToSendNewTemplateMessage
+        })?;
+
+        template_data_guard.insert(template_data.get_template_id(), template_data.clone());
         tracing::debug!(
-            "new_template_ipc_client() called - max_size: {}, max_sigops: {}",
-            coinbase_output_max_additional_size,
-            coinbase_output_max_additional_sigops
+            "Saved template data with template_id: {}",
+            template_data.get_template_id()
+        );
+
+        Ok(())
+    }
+
+    fn current_template_ids(&self) -> Result<HashSet<u64>, BitcoinCoreSv2TDPError> {
+        let template_data_guard = self.template_data.read().map_err(|e| {
+            tracing::error!("Failed to acquire read lock on template_data: {:?}", e);
+            BitcoinCoreSv2TDPError::FailedToSendNewTemplateMessage
+        })?;
+
+        Ok(template_data_guard.keys().copied().collect())
+    }
+
+    async fn publish_template(
+        &mut self,
+        template_data: TemplateData,
+        future_template: bool,
+        send_set_new_prev_hash: bool,
+        update_last_sent_template_instant: bool,
+    ) -> Result<(), BitcoinCoreSv2TDPError> {
+        let new_template = template_data
+            .get_new_template_message(future_template)
+            .map_err(|e| {
+                tracing::error!("Failed to get NewTemplate message: {:?}", e);
+                BitcoinCoreSv2TDPError::FailedToSendNewTemplateMessage
+            })?;
+        let set_new_prev_hash = if send_set_new_prev_hash {
+            Some(template_data.get_set_new_prev_hash_message())
+        } else {
+            None
+        };
+
+        self.store_template_data(&template_data)?;
+
+        if send_set_new_prev_hash {
+            self.current_prev_hash
+                .replace(Some(template_data.get_prev_hash()));
+            tracing::debug!(
+                "Set current_prev_hash to: {}",
+                template_data.get_prev_hash()
+            );
+        }
+
+        tracing::debug!(
+            "Sending NewTemplate (future={}) with template_id: {}",
+            future_template,
+            template_data.get_template_id()
+        );
+        self.outgoing_messages
+            .send(TemplateDistribution::NewTemplate(new_template))
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to send NewTemplate message: {:?}", e);
+                BitcoinCoreSv2TDPError::FailedToSendNewTemplateMessage
+            })?;
+        tracing::debug!("Successfully sent NewTemplate message");
+
+        if let Some(set_new_prev_hash) = set_new_prev_hash {
+            tracing::debug!(
+                "Sending SetNewPrevHash with prev_hash: {}",
+                template_data.get_prev_hash()
+            );
+            self.outgoing_messages
+                .send(TemplateDistribution::SetNewPrevHash(set_new_prev_hash))
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to send SetNewPrevHash message: {:?}", e);
+                    BitcoinCoreSv2TDPError::FailedToSendSetNewPrevHashMessage
+                })?;
+            tracing::debug!("Successfully sent SetNewPrevHash message");
+        }
+
+        if update_last_sent_template_instant {
+            self.last_sent_template_instant = Some(Instant::now());
+        }
+
+        Ok(())
+    }
+
+    /// Creates a fresh Bitcoin Core Template IPC client from the given
+    /// [`CoinbaseOutputConstraints`] and immediately sends a `NewTemplate` + `SetNewPrevHash`.
+    ///
+    /// This method intentionally couples these operations because every constraints update should
+    /// make a newly constrained template visible to the Sv2 side right away. On success, it:
+    ///
+    /// - creates a new `BlockTemplateIpcClient` configured with the provided constraints
+    /// - fetches the corresponding `TemplateData`
+    /// - stores the fetched `TemplateData`
+    /// - sends `NewTemplate(future_template = true)`
+    /// - sends the matching `SetNewPrevHash`
+    /// - updates `current_prev_hash` and `last_sent_template_instant`
+    /// - stores the client as `current_template_ipc_client`
+    async fn bootstrap_template_ipc_client_from_coinbase_output_constraints(
+        &mut self,
+        coinbase_output_constraints: CoinbaseOutputConstraints,
+    ) -> Result<(), BitcoinCoreSv2TDPError> {
+        tracing::debug!(
+            "bootstrap_template_ipc_client_from_coinbase_output_constraints() called - max_size: {}, max_sigops: {}",
+            coinbase_output_constraints.coinbase_output_max_additional_size,
+            coinbase_output_constraints.coinbase_output_max_additional_sigops
         );
 
         let mut template_ipc_client_request = self.mining_ipc_client.create_new_block_request();
@@ -507,12 +518,13 @@ impl BitcoinCoreSv2TDP {
                 e
             })?;
 
-        let coinbase_weight = (coinbase_output_max_additional_size * WEIGHT_FACTOR) as u64;
+        let coinbase_weight = (coinbase_output_constraints.coinbase_output_max_additional_size
+            * WEIGHT_FACTOR) as u64;
         let block_reserved_weight = coinbase_weight.max(MIN_BLOCK_RESERVED_WEIGHT); // 2000 is the minimum block reserved weight
         tracing::debug!("Setting block_reserved_weight: {block_reserved_weight}");
         template_ipc_client_request_options.set_block_reserved_weight(block_reserved_weight);
         template_ipc_client_request_options.set_coinbase_output_max_additional_sigops(
-            coinbase_output_max_additional_sigops as u64,
+            coinbase_output_constraints.coinbase_output_max_additional_sigops as u64,
         );
         template_ipc_client_request_options.set_use_mempool(true);
 
@@ -536,18 +548,26 @@ impl BitcoinCoreSv2TDP {
             e
         })?;
 
-        Ok(template_ipc_client)
+        tracing::debug!("Fetching template data from bootstrapped template IPC client");
+        let template_data = self
+            .fetch_template_data(template_ipc_client.clone(), self.thread_ipc_client.clone())
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to fetch template data: {:?}", e);
+                e
+            })?;
+
+        self.publish_template(template_data, true, true, true)
+            .await?;
+        self.set_current_template_ipc_client(template_ipc_client);
+
+        Ok(())
     }
 
-    async fn interrupt_wait_request(&self) -> Result<(), BitcoinCoreSv2TDPError> {
-        let template_ipc_client = match self.current_template_ipc_client.borrow().clone() {
-            Some(template_ipc_client) => template_ipc_client,
-            None => {
-                tracing::error!("Template IPC client not found");
-                return Err(BitcoinCoreSv2TDPError::TemplateIpcClientNotFound);
-            }
-        };
-
+    async fn interrupt_wait_request(
+        &self,
+        template_ipc_client: &BlockTemplateIpcClient,
+    ) -> Result<(), BitcoinCoreSv2TDPError> {
         let interrupt_wait_request = template_ipc_client.interrupt_wait_request();
         if let Err(e) = interrupt_wait_request.send().promise.await {
             tracing::error!("Failed to send interrupt wait request: {}", e);
@@ -559,16 +579,9 @@ impl BitcoinCoreSv2TDP {
 
     async fn new_wait_next_request(
         &self,
+        template_ipc_client: &BlockTemplateIpcClient,
         thread_ipc_client: ThreadIpcClient,
     ) -> Result<Request<WaitNextParams, WaitNextResults>, BitcoinCoreSv2TDPError> {
-        let template_ipc_client = match self.current_template_ipc_client.borrow().clone() {
-            Some(template_ipc_client) => template_ipc_client,
-            None => {
-                tracing::error!("Template IPC client not found");
-                return Err(BitcoinCoreSv2TDPError::TemplateIpcClientNotFound);
-            }
-        };
-
         let mut wait_next_request = template_ipc_client.wait_next_request();
 
         match wait_next_request.get().get_context() {
