@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_channel::{Receiver, Sender};
 use bitcoin_core_sv2::template_distribution_protocol::CancellationToken;
 use stratum_apps::{
-    fallback_coordinator::FallbackCoordinator,
+    fallback_coordinator::{FallbackCoordinator, FallbackHandler},
     network_helpers::noise_stream::{NoiseTcpReadHalf, NoiseTcpWriteHalf},
     stratum_core::framing_sv2::framing::Frame,
     task_manager::TaskManager,
@@ -11,7 +11,46 @@ use stratum_apps::{
 };
 use tracing::{error, trace, warn, Instrument as _};
 
+struct FallbackRegistration {
+    handler: Option<FallbackHandler>,
+    token: Option<CancellationToken>,
+}
+
+impl FallbackRegistration {
+    fn new(fallback_coordinator: Option<FallbackCoordinator>) -> Self {
+        match fallback_coordinator {
+            Some(fallback_coordinator) => Self {
+                handler: Some(fallback_coordinator.register()),
+                token: Some(fallback_coordinator.token()),
+            },
+            None => Self {
+                handler: None,
+                token: None,
+            },
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.token.is_some()
+    }
+
+    async fn cancelled(&self) {
+        if let Some(token) = &self.token {
+            token.cancelled().await;
+        }
+    }
+
+    fn done(self) {
+        if let Some(handler) = self.handler {
+            handler.done();
+        }
+    }
+}
+
 /// Spawns async reader and writer tasks for handling framed I/O with shutdown support.
+///
+/// If a fallback coordinator is provided, both tasks are registered with it and listen for fallback
+/// cancellation.
 #[track_caller]
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(not(test), hotpath::measure)]
@@ -22,7 +61,7 @@ pub fn spawn_io_tasks(
     outbound_rx: Receiver<Sv2Frame>,
     inbound_tx: Sender<Sv2Frame>,
     cancellation_token: CancellationToken,
-    fallback_coordinator: FallbackCoordinator,
+    fallback_coordinator: Option<FallbackCoordinator>,
 ) {
     let caller = std::panic::Location::caller();
     let inbound_tx_clone = inbound_tx.clone();
@@ -34,14 +73,10 @@ pub fn spawn_io_tasks(
 
         task_manager.spawn(
             async move {
-                // we just spawned a new task that's relevant to fallback coordination
-                // so register it with the fallback coordinator
-                let fallback_handler = fallback_coordinator_clone.register();
-
-                // get the cancellation token that signals fallback
-                let fallback_token = fallback_coordinator_clone.token();
+                let fallback = FallbackRegistration::new(fallback_coordinator_clone);
 
                 trace!("Reader task started");
+
                 loop {
                     tokio::select! {
                         _ = cancellation_token_clone.cancelled() => {
@@ -49,7 +84,7 @@ pub fn spawn_io_tasks(
                             inbound_tx.close();
                             break;
                         }
-                        _ = fallback_token.cancelled() => {
+                        _ = fallback.cancelled(), if fallback.is_enabled() => {
                             trace!("Received fallback signal");
                             inbound_tx.close();
                             break;
@@ -82,13 +117,14 @@ pub fn spawn_io_tasks(
                         }
                     }
                 }
+
                 inbound_tx.close();
                 outbound_rx_clone.close();
                 drop(inbound_tx);
                 drop(outbound_rx_clone);
 
-                // signal fallback coordinator that this task has completed its cleanup
-                fallback_handler.done();
+                fallback.done();
+
                 warn!("Reader task exited.");
             }
             .instrument(tracing::trace_span!(
@@ -102,14 +138,10 @@ pub fn spawn_io_tasks(
         let fallback_coordinator_clone = fallback_coordinator.clone();
         task_manager.spawn(
             async move {
-                // we just spawned a new task that's relevant to fallback coordination
-                // so register it with the fallback coordinator
-                let fallback_handler = fallback_coordinator_clone.register();
-
-                // get the cancellation token that signals fallback
-                let fallback_token = fallback_coordinator_clone.token();
+                let fallback = FallbackRegistration::new(fallback_coordinator_clone);
 
                 trace!("Writer task started");
+
                 loop {
                     tokio::select! {
                         _ = cancellation_token.cancelled() => {
@@ -117,7 +149,7 @@ pub fn spawn_io_tasks(
                             inbound_tx_clone.close();
                             break;
                         }
-                        _ = fallback_token.cancelled() => {
+                        _ = fallback.cancelled(), if fallback.is_enabled() => {
                             trace!("Received fallback signal");
                             inbound_tx_clone.close();
                             break;
@@ -146,8 +178,8 @@ pub fn spawn_io_tasks(
                 drop(outbound_rx);
                 drop(inbound_tx_clone);
 
-                // signal fallback coordinator that this task has completed its cleanup
-                fallback_handler.done();
+                fallback.done();
+
                 warn!("Writer task exited.");
             }
             .instrument(tracing::trace_span!(

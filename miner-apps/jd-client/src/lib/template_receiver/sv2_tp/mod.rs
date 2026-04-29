@@ -15,7 +15,6 @@ use std::sync::Arc;
 use async_channel::{unbounded, Receiver, Sender};
 use bitcoin_core_sv2::template_distribution_protocol::CancellationToken;
 use stratum_apps::{
-    fallback_coordinator::FallbackCoordinator,
     key_utils::Secp256k1PublicKey,
     network_helpers::{self, connect_with_noise, resolve_host_port},
     stratum_core::{
@@ -120,7 +119,6 @@ impl Sv2Tp {
         channel_manager_receiver: Receiver<TemplateDistribution<'static>>,
         channel_manager_sender: Sender<TemplateDistribution<'static>>,
         cancellation_token: CancellationToken,
-        fallback_coordinator: FallbackCoordinator,
         task_manager: Arc<TaskManager>,
     ) -> JDCResult<Sv2Tp, error::TemplateProvider> {
         const MAX_RETRIES: usize = 3;
@@ -155,7 +153,7 @@ impl Sv2Tp {
                                         outbound_rx,
                                         inbound_tx,
                                         cancellation_token.clone(),
-                                        fallback_coordinator.clone(),
+                                        None,
                                     );
 
                                     let sv2_tp_io = Sv2TpIo {

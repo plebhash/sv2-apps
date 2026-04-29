@@ -147,7 +147,7 @@ impl JobDeclarator {
             outbound_rx,
             inbound_tx,
             cancellation_token,
-            fallback_coordinator,
+            Some(fallback_coordinator),
         );
 
         let job_declarator_io = JobDeclaratorIo {

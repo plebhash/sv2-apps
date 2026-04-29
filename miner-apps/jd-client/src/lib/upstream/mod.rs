@@ -162,7 +162,7 @@ impl Upstream {
             outbound_rx,
             inbound_tx,
             cancellation_token.clone(),
-            fallback_coordinator.clone(),
+            Some(fallback_coordinator.clone()),
         );
 
         debug!("Noise setup done in upstream connection");

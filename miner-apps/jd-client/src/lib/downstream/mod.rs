@@ -164,7 +164,7 @@ impl Downstream {
             outbound_rx,
             inbound_tx,
             downstream_cancellation_token.clone(),
-            fallback_coordinator.clone(),
+            Some(fallback_coordinator.clone()),
         );
 
         let downstream_io = DownstreamIo {

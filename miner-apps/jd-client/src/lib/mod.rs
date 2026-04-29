@@ -181,7 +181,6 @@ impl JobDeclaratorClient {
                     channel_manager_to_tp_receiver,
                     tp_to_channel_manager_sender,
                     self.cancellation_token.clone(),
-                    fallback_coordinator.clone(),
                     task_manager.clone(),
                 )
                 .await
