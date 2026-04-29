@@ -168,6 +168,7 @@ impl JobDeclaratorClient {
 
         let initial_channel_manager = channel_manager.clone();
         let mut bitcoin_core_sv2_join_handle: Option<JoinHandle<()>> = None;
+        let mut bitcoin_core_sv2_cancellation_token: Option<CancellationToken> = None;
 
         match self.config.template_provider_type().clone() {
             TemplateProviderType::Sv2Tp {
@@ -217,15 +218,17 @@ impl JobDeclaratorClient {
                 let incoming_tdp_receiver = channel_manager_to_tp_receiver.clone();
                 let outgoing_tdp_sender = tp_to_channel_manager_sender.clone();
 
+                let bitcoin_core_cancellation_token = CancellationToken::new();
                 let bitcoin_core_config = BitcoinCoreSv2TDPConfig {
                     unix_socket_path,
                     fee_threshold,
                     min_interval,
                     incoming_tdp_receiver,
                     outgoing_tdp_sender,
-                    cancellation_token: CancellationToken::new(),
+                    cancellation_token: bitcoin_core_cancellation_token.clone(),
                 };
 
+                bitcoin_core_sv2_cancellation_token = Some(bitcoin_core_cancellation_token);
                 bitcoin_core_sv2_join_handle = Some(
                     connect_to_bitcoin_core(
                         bitcoin_core_config,
@@ -532,6 +535,10 @@ impl JobDeclaratorClient {
                     });
                 }
             }
+        }
+
+        if let Some(bitcoin_core_sv2_cancellation_token) = bitcoin_core_sv2_cancellation_token {
+            bitcoin_core_sv2_cancellation_token.cancel();
         }
 
         if let Some(bitcoin_core_sv2_join_handle) = bitcoin_core_sv2_join_handle {
