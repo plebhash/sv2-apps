@@ -267,8 +267,12 @@ impl Downstream {
 
                 }
             }
-
-            remove_downstream(self.downstream_id);
+            if !cancellation_token.is_cancelled() && !fallback_token.is_cancelled() {
+                // Only remove downstream when system is not going through shutdown
+                // or fallback. As in those cases we initialize new set of subsystems
+                // and free old allocated memory.
+                remove_downstream(self.downstream_id);
+            }
             self.downstream_cancellation_token.cancel();
             warn!("Downstream: unified message loop exited.");
             fallback_handler.done();
