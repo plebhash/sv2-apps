@@ -331,20 +331,24 @@ impl JobDeclaratorClient {
             let task_manager = task_manager.clone();
             let fallback_coordinator = fallback_coordinator.clone();
             async move {
-                _ = initial_channel_manager
+                if let Err(e) = initial_channel_manager
                     .start_downstream_server(
                         *config.authority_public_key(),
                         *config.authority_secret_key(),
                         config.cert_validity_sec(),
                         *config.listening_address(),
                         task_manager,
-                        cancellation_token,
+                        cancellation_token.clone(),
                         fallback_coordinator,
                         downstream_to_channel_manager_sender,
                         config.supported_extensions().to_vec(),
                         config.required_extensions().to_vec(),
                     )
-                    .await;
+                    .await
+                {
+                    tracing::error!(?e, "Downstream server task exited with error");
+                    cancellation_token.cancel();
+                }
             }
         });
 
@@ -516,20 +520,23 @@ impl JobDeclaratorClient {
                         let task_manager = task_manager.clone();
                         let fallback_coordinator = fallback_coordinator.clone();
                         async move {
-                            _ = channel_manager
+                            if let Err(e) = channel_manager
                                 .start_downstream_server(
                                     *config.authority_public_key(),
                                     *config.authority_secret_key(),
                                     config.cert_validity_sec(),
                                     *config.listening_address(),
                                     task_manager,
-                                    cancellation_token,
+                                    cancellation_token.clone(),
                                     fallback_coordinator,
                                     downstream_to_channel_manager_sender_new,
                                     config.supported_extensions().to_vec(),
                                     config.required_extensions().to_vec(),
                                 )
-                                .await;
+                                .await {
+                                    tracing::error!(?e, "Downstream server task exited with error");
+                                    cancellation_token.cancel();
+                                }
                         }
                     });
                 }
