@@ -124,27 +124,6 @@ impl TranslatorSv2 {
             tproxy_mode,
         ));
 
-        info!("Initializing upstream connection...");
-
-        if let Err(e) = self
-            .initialize_upstream(
-                &mut upstream_addresses,
-                channel_manager_to_upstream_receiver.clone(),
-                upstream_to_channel_manager_sender.clone(),
-                cancellation_token.clone(),
-                fallback_coordinator.clone(),
-                task_manager.clone(),
-                sv1_server.clone(),
-                self.config.required_extensions.clone(),
-            )
-            .await
-        {
-            error!("Failed to initialize any upstream connection: {e:?}");
-            self.shutdown_notify.notify_waiters();
-            self.is_alive.store(false, Ordering::Relaxed);
-            return;
-        }
-
         let mut channel_manager: Arc<ChannelManager> = Arc::new(ChannelManager::new(
             channel_manager_to_upstream_sender,
             upstream_to_channel_manager_receiver,
@@ -165,6 +144,27 @@ impl TranslatorSv2 {
             task_manager.clone(),
         )
         .await;
+
+        info!("Initializing upstream connection...");
+
+        if let Err(e) = self
+            .initialize_upstream(
+                &mut upstream_addresses,
+                channel_manager_to_upstream_receiver.clone(),
+                upstream_to_channel_manager_sender.clone(),
+                cancellation_token.clone(),
+                fallback_coordinator.clone(),
+                task_manager.clone(),
+                sv1_server.clone(),
+                self.config.required_extensions.clone(),
+            )
+            .await
+        {
+            error!("Failed to initialize any upstream connection: {e:?}");
+            self.shutdown_notify.notify_waiters();
+            self.is_alive.store(false, Ordering::Relaxed);
+            return;
+        }
 
         // Start monitoring server if configured
         #[cfg(feature = "monitoring")]
@@ -253,20 +253,6 @@ impl TranslatorSv2 {
                                     tproxy_mode
                                 ));
 
-                                if let Err(e) = self.initialize_upstream(
-                                    &mut upstream_addresses,
-                                    channel_manager_to_upstream_receiver,
-                                    upstream_to_channel_manager_sender,
-                                    cancellation_token.clone(),
-                                    fallback_coordinator.clone(),
-                                    task_manager.clone(),
-                                    sv1_server.clone(),
-                                    self.config.required_extensions.clone(),
-                                ).await {
-                                    error!("Couldn't perform fallback, shutting system down: {e:?}");
-                                    cancellation_token.cancel();
-                                    break;
-                                }
 
                                 channel_manager = Arc::new(ChannelManager::new(
                                     channel_manager_to_upstream_sender,
@@ -288,6 +274,22 @@ impl TranslatorSv2 {
                                     task_manager.clone(),
                                 )
                                 .await;
+
+                                if let Err(e) = self.initialize_upstream(
+                                    &mut upstream_addresses,
+                                    channel_manager_to_upstream_receiver,
+                                    upstream_to_channel_manager_sender,
+                                    cancellation_token.clone(),
+                                    fallback_coordinator.clone(),
+                                    task_manager.clone(),
+                                    sv1_server.clone(),
+                                    self.config.required_extensions.clone(),
+                                ).await {
+                                    error!("Couldn't perform fallback, shutting system down: {e:?}");
+                                    cancellation_token.cancel();
+                                    break;
+                                }
+
 
                                 // Recreate monitoring server with new components
                                 #[cfg(feature = "monitoring")]
