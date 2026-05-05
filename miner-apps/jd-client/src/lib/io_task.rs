@@ -90,7 +90,7 @@ pub fn spawn_io_tasks(
                             inbound_tx.close();
                             break;
                         }
-                        res = reader.read_frame(), if !inbound_tx.is_closed() => {
+                        res = reader.read_frame() => {
                             match res {
                                 Ok(frame) => {
                                     match frame {
@@ -156,7 +156,7 @@ pub fn spawn_io_tasks(
                             inbound_tx_clone.close();
                             break;
                         }
-                        res = outbound_rx.recv(), if !outbound_rx.is_closed() => {
+                        res = outbound_rx.recv() => {
                             match res {
                                 Ok(frame) => {
                                     trace!("Sending outbound frame");
@@ -176,7 +176,7 @@ pub fn spawn_io_tasks(
                                             trace!("Inbound channel closed during write");
                                             break;
                                         }
-                                        result = writer.write_frame(frame.into()), if !inbound_tx_clone.is_closed() => result,
+                                        result = writer.write_frame(frame.into()) => result,
                                     };
                                     if let Err(e) = write_result {
                                         error!(error=?e, "Writer error");

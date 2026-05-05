@@ -219,7 +219,7 @@ impl JobDeclarator {
                         info!("Job Declarator: received shutdown signal");
                         break;
                     }
-                    res = self_clone_1.handle_job_declarator_message(), if !self_clone_1.job_declarator_io.jds_receiver.is_closed() => {
+                    res = self_clone_1.handle_job_declarator_message() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Job Declarator message handling failed");
                             if let LoopControl::Break = Self::handle_error_action(
@@ -232,7 +232,7 @@ impl JobDeclarator {
                             }
                         }
                     }
-                    res = self_clone_2.handle_channel_manager_message(), if !self_clone_2.job_declarator_io.channel_manager_receiver.is_closed() => {
+                    res = self_clone_2.handle_channel_manager_message() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Channel Manager message handling failed");
                             if let LoopControl::Break = Self::handle_error_action(

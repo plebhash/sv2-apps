@@ -189,7 +189,7 @@ impl Sv2Tp {
                         info!("Template Receiver: received shutdown signal");
                         break;
                     }
-                    res = self_clone_1.handle_template_provider_message(), if !self_clone_1.sv2_tp_io.tp_receiver.is_closed() => {
+                    res = self_clone_1.handle_template_provider_message() => {
                         if let Err(e) = res {
                             error!("TemplateReceiver template provider handler failed: {e:?}");
                             if let LoopControl::Break = Self::handle_error_action(
@@ -201,7 +201,7 @@ impl Sv2Tp {
                             }
                         }
                     }
-                    res = self_clone_2.handle_channel_manager_message(), if !self_clone_2.sv2_tp_io.channel_manager_receiver.is_closed() => {
+                    res = self_clone_2.handle_channel_manager_message() => {
                         if let Err(e) = res {
                             error!("TemplateReceiver channel manager handler failed: {e:?}");
                             if let LoopControl::Break = Self::handle_error_action(

@@ -238,7 +238,7 @@ impl Downstream {
                         debug!("Downstream {downstream_id}: received shutdown signal");
                         break;
                     }
-                    res = self_clone_1.handle_downstream_message(), if !self_clone_1.downstream_io.downstream_receiver.is_closed() => {
+                    res = self_clone_1.handle_downstream_message() => {
                         if let Err(e) = res {
                             error!(?e, "Error handling downstream message for {downstream_id}");
                             if let LoopControl::Break = self.handle_error_action(
@@ -250,7 +250,7 @@ impl Downstream {
                             }
                         }
                     }
-                    res = self_clone_2.handle_channel_manager_message(), if !self_clone_2.downstream_io.channel_manager_receiver.is_closed() => {
+                    res = self_clone_2.handle_channel_manager_message() => {
                         if let Err(e) = res {
                             error!(?e, "Error handling channel manager message for {downstream_id}");
                             if let LoopControl::Break = self.handle_error_action(

@@ -499,7 +499,7 @@ impl Upstream {
                         info!("Upstream: received shutdown signal. Exiting loop.");
                         break;
                     }
-                    res = self.clone().handle_upstream_message(), if !self.upstream_io.upstream_receiver.is_closed() => {
+                    res = self.clone().handle_upstream_message() => {
                         if let Err(e) = res {
                             if let LoopControl::Break = Self::handle_error_action(
                                 "Upstream::handle_upstream_message",
@@ -511,7 +511,7 @@ impl Upstream {
                             }
                         }
                     }
-                    res = self.handle_channel_manager_message(), if !self.upstream_io.channel_manager_receiver.is_closed() => {
+                    res = self.handle_channel_manager_message() => {
                         if let Err(e) = res {
                             if let LoopControl::Break = Self::handle_error_action(
                                 "Upstream::handle_channel_manager_message",

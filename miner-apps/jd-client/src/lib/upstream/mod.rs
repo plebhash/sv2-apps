@@ -343,7 +343,7 @@ impl Upstream {
                         info!("Upstream: received shutdown signal");
                         break;
                     }
-                    res = self_clone_1.handle_pool_message_frame(), if !self_clone_1.upstream_io.upstream_receiver.is_closed() => {
+                    res = self_clone_1.handle_pool_message_frame() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Upstream: error handling pool message.");
                             if let LoopControl::Break = Self::handle_error_action(
@@ -356,7 +356,7 @@ impl Upstream {
                             }
                         }
                     }
-                    res = self_clone_2.handle_channel_manager_message_frame(), if !self_clone_2.upstream_io.channel_manager_receiver.is_closed() => {
+                    res = self_clone_2.handle_channel_manager_message_frame() => {
                         if let Err(e) = res {
                             error!(error = ?e, "Upstream: error handling channel manager message.");
                             if let LoopControl::Break = Self::handle_error_action(

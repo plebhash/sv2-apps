@@ -329,7 +329,7 @@ impl ChannelManager {
                         info!("ChannelManager: received shutdown signal.");
                         break;
                     }
-                    res = self.clone().handle_upstream_frame(), if !self.channel_manager_io.upstream_receiver.is_closed() => {
+                    res = self.clone().handle_upstream_frame() => {
                         if let Err(e) = res {
                             if let LoopControl::Break = self.handle_error_action(
                                 "ChannelManager::handle_upstream_frame",
@@ -341,7 +341,7 @@ impl ChannelManager {
                             }
                         }
                     },
-                    res = self.clone().handle_downstream_message(), if !self.channel_manager_io.sv1_server_receiver.is_closed() => {
+                    res = self.clone().handle_downstream_message() => {
                         if let Err(e) = res {
                             if let LoopControl::Break = self.handle_error_action(
                                 "ChannelManager::handle_downstream_message",

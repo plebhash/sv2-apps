@@ -426,8 +426,7 @@ impl ChannelManager {
                     res = &mut vardiff_future => {
                         info!("Vardiff loop completed with: {res:?}");
                     }
-                    res = cm_template.handle_template_provider_message(),
-                        if !cm.channel_manager_io.tp_receiver.is_closed() =>
+                    res = cm_template.handle_template_provider_message() =>
                     {
                         if let Err(e) = res {
                             error!(error = ?e, "Error handling Template Receiver message");
@@ -440,8 +439,7 @@ impl ChannelManager {
                             }
                         }
                     }
-                    res = cm_downstreams.handle_downstream_mining_message(),
-                        if !cm.channel_manager_io.downstream_receiver.is_closed() =>
+                    res = cm_downstreams.handle_downstream_mining_message() =>
                     {
                         if let Err(e) = res {
                             error!(error = ?e, "Error handling Downstreams message");

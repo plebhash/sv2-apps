@@ -371,7 +371,7 @@ impl Sv1Server {
                         self.cleanup();
                         break;
                     }
-                    res = self.handle_downstream_message(), if !self.sv1_server_io.downstream_to_sv1_server_receiver.is_closed() => {
+                    res = self.handle_downstream_message() => {
                         if let Err(e) = res {
                             if let LoopControl::Break = self.handle_error_action(
                                 "Sv1Server::handle_downstream_message",
@@ -386,7 +386,7 @@ impl Sv1Server {
                     }
                     res = self.handle_upstream_message(
                         first_target,
-                    ), if !self.sv1_server_io.channel_manager_receiver.is_closed() => {
+                    ) => {
                         if let Err(e) = res {
                             if let LoopControl::Break = self.handle_error_action(
                                 "Sv1Server::handle_upstream_message",
