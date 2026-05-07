@@ -52,10 +52,14 @@ impl SnifferSV1 {
         let listening_address = self.listening_address;
         let messages_from_downstream = self.messages_from_downstream.clone();
         let messages_from_upstream = self.messages_from_upstream.clone();
-        tokio::spawn(async move {
-            let listener = TcpListener::bind(listening_address)
-                .await
-                .expect("Failed to listen on given address");
+        let listener = std::net::TcpListener::bind(listening_address)
+            .expect("Failed to listen on given address");
+        listener
+            .set_nonblocking(true)
+            .expect("Failed to set listener non-blocking");
+        crate::spawn_app_runtime("sv1-sniffer", async move {
+            let listener =
+                TcpListener::from_std(listener).expect("failed to create Tokio TCP listener");
             let sniffer_to_upstream_stream = loop {
                 match TcpStream::connect(upstream_address).await {
                     Ok(s) => break s,

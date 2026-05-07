@@ -1,4 +1,4 @@
-use crate::utils::{create_downstream, create_upstream, message_from_frame, wait_for_client};
+use crate::utils::{create_downstream, create_upstream, message_from_frame};
 use async_channel::Sender;
 use std::{convert::TryInto, net::SocketAddr, time::Duration};
 use stratum_apps::{
@@ -12,7 +12,7 @@ use stratum_apps::{
     },
     utils::types::Sv2Frame,
 };
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tracing::info;
 
 pub enum WithSetup {
@@ -60,64 +60,79 @@ impl MockDownstream {
 
     pub async fn start(self) -> Sender<AnyMessage<'static>> {
         let upstream_address = self.upstream_address;
+        let setup = self.setup;
 
         let (proxy_sender, proxy_receiver) = async_channel::unbounded::<AnyMessage<'static>>();
+        let (ready_sender, ready_receiver) = tokio::sync::oneshot::channel();
 
-        let (upstream_receiver, upstream_sender) = create_upstream(loop {
-            match TcpStream::connect(upstream_address).await {
-                Ok(stream) => break stream,
-                Err(_) => {
-                    tracing::warn!(
-                        "MockDownstream: unable to connect to upstream, retrying after 1 second"
-                    );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        crate::spawn_app_runtime("mock-downstream", async move {
+            let (upstream_receiver, upstream_sender) = create_upstream(loop {
+                match TcpStream::connect(upstream_address).await {
+                    Ok(stream) => break stream,
+                    Err(_) => {
+                        tracing::warn!(
+                            "MockDownstream: unable to connect to upstream, retrying after 1 second"
+                        );
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    }
                 }
-            }
-        })
-        .await
-        .expect("Failed to create upstream");
+            })
+            .await
+            .expect("Failed to create upstream");
 
-        if let WithSetup::Yes(setup_connection) = self.setup {
-            let protocol = setup_connection.protocol;
-            let flags = setup_connection.flags;
-            let msg = AnyMessage::Common(CommonMessages::SetupConnection(setup_connection));
-            let message_type = msg.message_type();
-            let frame = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
-                Sv2Frame::from_message(msg, message_type, 0, false)
-                    .expect("Failed to create SetupConnection frame"),
-            );
-            upstream_sender
-                .send(frame)
-                .await
-                .expect("Failed to send SetupConnection");
-            info!(
-                "MockDownstream: sent SetupConnection with protocol {:?} and flags {}",
-                protocol, flags
-            );
-        }
-
-        tokio::spawn(async move {
-            while let Ok(mut frame) = upstream_receiver.recv().await {
-                let (msg_type, msg) = message_from_frame(&mut frame);
-                info!(
-                    "MockDownstream: received message from upstream: {} {}",
-                    msg_type, msg
-                );
-            }
-        });
-
-        tokio::spawn(async move {
-            while let Ok(message) = proxy_receiver.recv().await {
-                let message_type = message.message_type();
+            if let WithSetup::Yes(setup_connection) = setup {
+                let protocol = setup_connection.protocol;
+                let flags = setup_connection.flags;
+                let msg = AnyMessage::Common(CommonMessages::SetupConnection(setup_connection));
+                let message_type = msg.message_type();
                 let frame = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
-                    Sv2Frame::from_message(message, message_type, 0, false)
-                        .expect("Failed to create frame from message"),
+                    Sv2Frame::from_message(msg, message_type, 0, false)
+                        .expect("Failed to create SetupConnection frame"),
                 );
-                if upstream_sender.send(frame).await.is_err() {
-                    break;
+                upstream_sender
+                    .send(frame)
+                    .await
+                    .expect("Failed to send SetupConnection");
+                info!(
+                    "MockDownstream: sent SetupConnection with protocol {:?} and flags {}",
+                    protocol, flags
+                );
+            }
+
+            let _ = ready_sender.send(());
+
+            let receive_from_upstream = async move {
+                while let Ok(mut frame) = upstream_receiver.recv().await {
+                    let (msg_type, msg) = message_from_frame(&mut frame);
+                    info!(
+                        "MockDownstream: received message from upstream: {} {}",
+                        msg_type, msg
+                    );
                 }
+            };
+
+            let send_to_upstream = async move {
+                while let Ok(message) = proxy_receiver.recv().await {
+                    let message_type = message.message_type();
+                    let frame = StandardEitherFrame::<AnyMessage<'_>>::Sv2(
+                        Sv2Frame::from_message(message, message_type, 0, false)
+                            .expect("Failed to create frame from message"),
+                    );
+                    if upstream_sender.send(frame).await.is_err() {
+                        break;
+                    }
+                }
+            };
+
+            tokio::select! {
+                _ = receive_from_upstream => {}
+                _ = send_to_upstream => {}
             }
         });
+
+        ready_receiver
+            .await
+            .expect("mock downstream runtime exited during startup");
 
         proxy_sender
     }
@@ -147,12 +162,22 @@ impl MockUpstream {
         let listening_address = self.listening_address;
 
         let (proxy_sender, proxy_receiver) = async_channel::unbounded::<AnyMessage<'static>>();
+        let listener = std::net::TcpListener::bind(listening_address)
+            .expect("Failed to listen on given address");
+        listener
+            .set_nonblocking(true)
+            .expect("Failed to set listener non-blocking");
 
-        tokio::spawn(async move {
-            let (downstream_receiver, downstream_sender) =
-                create_downstream(wait_for_client(listening_address).await)
-                    .await
-                    .expect("Failed to connect to downstream");
+        crate::spawn_app_runtime("mock-upstream", async move {
+            let listener =
+                TcpListener::from_std(listener).expect("failed to create Tokio TCP listener");
+            let (downstream_stream, _) = listener
+                .accept()
+                .await
+                .expect("Failed to accept downstream connection");
+            let (downstream_receiver, downstream_sender) = create_downstream(downstream_stream)
+                .await
+                .expect("Failed to connect to downstream");
 
             if let WithSetup::Yes(expected_setup) = self.setup {
                 let expected_protocol = expected_setup.protocol;

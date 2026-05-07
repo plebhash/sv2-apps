@@ -173,15 +173,19 @@ impl MinerdProcess {
 
     /// Starts the TCP proxy to intercept communications between minerd and the upstream server
     pub async fn start_tcp_proxy(&mut self) -> Result<(), MinerdError> {
-        let listener = TcpListener::bind(self.local_address)
-            .await
+        let listener =
+            std::net::TcpListener::bind(self.local_address).map_err(MinerdError::ProxySetup)?;
+        listener
+            .set_nonblocking(true)
             .map_err(MinerdError::ProxySetup)?;
         let upstream_address = self.upstream_address;
         let single_submit = self.single_submit;
         let process = Arc::clone(&self.process);
         let cancellation_token = self.cancellation_token.clone();
 
-        tokio::spawn(async move {
+        crate::spawn_app_runtime("sv1-minerd-proxy", async move {
+            let listener =
+                TcpListener::from_std(listener).expect("failed to create Tokio TCP listener");
             info!("Proxy server started, waiting for connections...");
 
             loop {

@@ -8,6 +8,7 @@ use once_cell::sync::OnceCell;
 use pool_sv2::PoolSv2;
 use std::{
     convert::TryFrom,
+    future::Future,
     net::{Ipv4Addr, SocketAddr},
     time::Duration,
 };
@@ -33,6 +34,25 @@ pub mod sv1_sniffer;
 pub mod template_provider;
 pub mod types;
 pub mod utils;
+
+pub(crate) fn spawn_app_runtime<F>(name: &'static str, future: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let thread_name = format!("integration-tests-sv2-{name}");
+    std::thread::Builder::new()
+        .name(thread_name.clone())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .thread_name(thread_name)
+                .build()
+                .expect("failed to build dedicated app runtime");
+
+            runtime.block_on(future);
+        })
+        .expect("failed to spawn dedicated app runtime thread");
+}
 
 /// Concurrently shuts down multiple services.
 ///
@@ -166,7 +186,7 @@ pub async fn start_pool(
     );
     let pool = PoolSv2::new(config);
     let pool_clone = pool.clone();
-    tokio::spawn(async move {
+    spawn_app_runtime("pool", async move {
         _ = pool_clone.start().await;
     });
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -274,7 +294,7 @@ pub fn start_jdc(
     );
     let ret = jd_client_sv2::JobDeclaratorClient::new(jd_client_proxy);
     let ret_clone = ret.clone();
-    tokio::spawn(async move { ret_clone.start().await });
+    spawn_app_runtime("jdc", async move { ret_clone.start().await });
     (ret, jdc_address, monitoring_address)
 }
 
@@ -334,7 +354,7 @@ pub async fn start_pool_with_jds(
 
     let pool = PoolSv2::new(config);
     let pool_clone = pool.clone();
-    tokio::spawn(async move {
+    spawn_app_runtime("pool-with-jds", async move {
         _ = pool_clone.start().await;
     });
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -408,7 +428,7 @@ pub async fn start_sv2_translator(
     );
     let translator_v2 = translator_sv2::TranslatorSv2::new(config);
     let clone_translator_v2 = translator_v2.clone();
-    tokio::spawn(async move {
+    spawn_app_runtime("translator", async move {
         clone_translator_v2.start().await;
     });
     (translator_v2, listening_address, monitoring_address)
@@ -436,7 +456,7 @@ pub fn start_mining_device_sv2(
     nominal_hashrate_multiplier: Option<f32>,
     single_submit: bool,
 ) {
-    tokio::spawn(async move {
+    spawn_app_runtime("mining-device-sv2", async move {
         crate::mining_device::connect(
             upstream.to_string(),
             pub_key,

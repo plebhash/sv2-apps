@@ -4,7 +4,6 @@ use crate::{
     types::MsgType,
     utils::{
         create_downstream, create_upstream, recv_from_down_send_to_up, recv_from_up_send_to_down,
-        wait_for_client,
     },
 };
 use std::{
@@ -12,7 +11,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 use stratum_apps::stratum_core::parsers_sv2::{message_type_to_name, AnyMessage};
-use tokio::{net::TcpStream, select};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    select,
+};
 
 const DEFAULT_TIMEOUT: u64 = 60;
 
@@ -86,11 +88,21 @@ impl<'a> Sniffer<'a> {
         let action = self.action.clone();
         let identifier = self.identifier.to_string();
         let negotiated_extensions = self.negotiated_extensions.clone();
-        tokio::spawn(async move {
-            let (downstream_receiver, downstream_sender) =
-                create_downstream(wait_for_client(listening_address).await)
-                    .await
-                    .expect("Failed to create downstream");
+        let listener = std::net::TcpListener::bind(listening_address)
+            .expect("Failed to listen on given address");
+        listener
+            .set_nonblocking(true)
+            .expect("Failed to set listener non-blocking");
+        crate::spawn_app_runtime("sniffer", async move {
+            let listener =
+                TcpListener::from_std(listener).expect("failed to create Tokio TCP listener");
+            let (downstream_stream, _) = listener
+                .accept()
+                .await
+                .expect("Failed to accept downstream connection");
+            let (downstream_receiver, downstream_sender) = create_downstream(downstream_stream)
+                .await
+                .expect("Failed to create downstream");
             let (upstream_receiver, upstream_sender) = create_upstream(loop {
                 match TcpStream::connect(upstream_address).await {
                     Ok(stream) => break stream,
