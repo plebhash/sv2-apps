@@ -16,6 +16,7 @@ fn downstream_to_sv1_client_info(downstream: &Downstream) -> Option<Sv1ClientInf
             user_identity: dd.user_identity.clone(),
             target_hex: hex::encode(dd.target.to_be_bytes()),
             hashrate: dd.hashrate,
+            stable_hashrate: dd.stable_hashrate,
             extranonce1_hex: hex::encode(&dd.extranonce1),
             extranonce2_len: dd.extranonce2_len,
             version_rolling_mask: dd
