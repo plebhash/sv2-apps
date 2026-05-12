@@ -1028,8 +1028,11 @@ impl ChannelManager {
         };
 
         let Some(new_hashrate) = new_hashrate_opt else {
+            channel_state.set_stable_hashrate(true);
             return;
         };
+
+        channel_state.set_stable_hashrate(false);
 
         match channel_state.update_channel(new_hashrate, None) {
             Ok(()) => {
@@ -1071,6 +1074,7 @@ impl ChannelManager {
         };
 
         if let Some(new_hashrate) = new_hashrate_opt {
+            channel.set_stable_hashrate(false);
             match channel.update_channel(new_hashrate, None) {
                 Ok(()) => {
                     let updated_target = channel.get_target();
@@ -1090,6 +1094,8 @@ impl ChannelManager {
                     "Failed to update standard channel channel_id={channel_id} during vardiff {e:?}"
                 ),
             }
+        } else {
+            channel.set_stable_hashrate(true);
         }
     }
 
