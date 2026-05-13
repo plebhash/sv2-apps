@@ -32,6 +32,8 @@ If you're looking for the low-level protocol libraries, check out the [`stratum`
 - `stratum-apps/` - Shared application utilities
   - Configuration helpers (TOML, coinbase outputs, logging)
   - Network connection utilities (Noise protocol, plain TCP, SV1 connections)
+  - Payout identity parsing and coinbase output construction/verification helpers
+  - Runtime fallback coordination helpers
   - RPC client implementation
   - Key management utilities
   - Custom synchronization primitives

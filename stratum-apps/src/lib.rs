@@ -8,20 +8,26 @@
 //!
 //! ### Core Features
 //! - `network` - High-level networking utilities (enabled by default)
+//! - `fallback-coordinator` - Runtime fallback coordination helpers (enabled by default)
 //! - `config` - Configuration management helpers (enabled by default)
+//! - `payout` - Shared payout-mode parsing and coinbase-output distribution helpers
 //! - `rpc` - RPC utilities with custom types for JSON-RPC communication (optional)
+//! - `monitoring` - HTTP and Prometheus monitoring helpers (optional)
+//! - `std` - Standard-library support for key and random utilities (enabled by default)
+//! - `core` - Re-export and enable `stratum-core`
 //!
 //! ### Role-Specific Feature Bundles
 //! - `pool` - Everything needed for pool applications
 //! - `jd_client` - Everything needed for JD client applications
-//! - `jd_server` - Everything needed for JD server applications (includes RPC)
-//! - `translator` - Everything needed for translator applications (includes SV1)
-//! - `mining_device` - Everything needed for mining device applications
+//! - `jd_server` - Configuration helpers for JD server applications
+//! - `translator` - Everything needed for translator applications (includes SV1 and payout helpers)
+//! - `mining_device` - Configuration helpers for mining device applications
 //!
 //! ## Modules
 //!
 //! - [`network_helpers`] - High-level networking utilities for SV2 connections
 //! - [`config_helpers`] - Configuration management and parsing utilities
+//! - [`payout`] - Payout-mode parsing and coinbase-output construction/verification helpers
 //! - [`rpc`] - RPC utilities with custom serializable types (`Hash`, `BlockHash`, `Amount`)
 
 /// Re-export all the modules from `stratum_core`
@@ -76,5 +82,10 @@ pub mod tp_type;
 /// Creates a CoinbaseOutputConstraints message from a list of coinbase outputs
 pub mod coinbase_output_constraints;
 
+/// Shared payout-mode parsing and coinbase-output distribution helpers.
+#[cfg(feature = "payout")]
+pub mod payout;
+
 /// Fallback coordinator
+#[cfg(feature = "fallback-coordinator")]
 pub mod fallback_coordinator;

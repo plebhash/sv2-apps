@@ -53,11 +53,13 @@ ext-config = { version = "0.14.0", features = ["toml"], package = "config" }
 shellexpand = "3.1.1"
 
 [features]
-default = ["network", "config", "std"]
+default = ["network", "fallback-coordinator", "config", "std"]
 
 # Core module features
 network = ["tokio-util", "core"]
+fallback-coordinator = ["tokio-util"]
 config = []
+payout = ["config", "core"]
 rpc = ["serde_json", "hex", "base64", "hyper", "hyper-util", "http-body-util"]
 monitoring = ["serde_json", "axum", "prometheus", "utoipa", "utoipa-swagger-ui"]
 std = ["bs58/std", "secp256k1/rand-std", "rand/std", "rand/std_rng"]
@@ -68,11 +70,11 @@ sv1 = ["stratum-core/sv1", "stratum-core/translation", "tokio-util", "serde_json
 with_buffer_pool = ["stratum-core/with_buffer_pool"]
 
 # Convenience feature bundles for different role types
-pool = ["network", "config", "with_buffer_pool", "core"]
-jd_client = ["network", "config", "with_buffer_pool", "core"]
+pool = ["network", "config", "with_buffer_pool", "core", "payout"]
+jd_client = ["network", "fallback-coordinator", "config", "with_buffer_pool", "core"]
 # Note: jd_server intentionally excludes 'core', 'network', and 'rpc' - it uses crates.io crates directly
 jd_server = ["config"]
-translator = ["network", "config", "sv1", "with_buffer_pool", "core"]
+translator = ["network", "fallback-coordinator", "config", "sv1", "with_buffer_pool", "core", "payout"]
 # Note: mining_device intentionally excludes 'core', 'network', and 'rpc' - it uses crates.io crates directly
 mining_device = ["config"]
 
