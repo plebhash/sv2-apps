@@ -28,7 +28,7 @@ use jd_server_sv2::job_declarator::SetCustomMiningJobResponse;
 use crate::{
     channel_manager::{ChannelManager, RouteMessageTo, CLIENT_SEARCH_SPACE_BYTES},
     error::{self, PoolError, PoolErrorKind},
-    utils::{create_close_channel_msg, PayoutMode},
+    utils::{create_close_channel_msg, PayoutMode, PayoutModeError},
 };
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -145,6 +145,7 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
 
             let payout_mode = match PayoutMode::try_from(user_identity.as_str()) {
                 Ok(mode) => mode,
+                Err(PayoutModeError::NoPayoutMode(_)) => PayoutMode::FullDonation,
                 Err(_) => {
                     error!("Invalid user_identity '{}': does not match any supported identity format", user_identity);
                     let open_standard_mining_channel_error = OpenMiningChannelError {
@@ -331,6 +332,7 @@ impl HandleMiningMessagesFromClientAsync for ChannelManager {
 
                         let payout_mode = match PayoutMode::try_from(user_identity.as_str()) {
                             Ok(mode) => mode,
+                            Err(PayoutModeError::NoPayoutMode(_)) => PayoutMode::FullDonation,
                             Err(_) => {
                                 error!("Invalid user_identity '{}': does not match any supported identity format", user_identity);
                                 let open_extended_mining_channel_error = OpenMiningChannelError {

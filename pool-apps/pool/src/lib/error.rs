@@ -338,6 +338,13 @@ impl From<String> for PoolErrorKind {
         PoolErrorKind::Custom(e)
     }
 }
+
+impl From<stratum_apps::payout::PayoutModeError> for PoolErrorKind {
+    fn from(e: stratum_apps::payout::PayoutModeError) -> PoolErrorKind {
+        PoolErrorKind::PayoutModeError(e.to_string())
+    }
+}
+
 impl From<framing_sv2::Error> for PoolErrorKind {
     fn from(e: framing_sv2::Error) -> PoolErrorKind {
         PoolErrorKind::Framing(e)
