@@ -11,6 +11,7 @@ use std::sync::Arc;
 use stratum_apps::{
     custom_mutex::Mutex,
     fallback_coordinator::FallbackCoordinator,
+    payout::PayoutMode,
     stratum_core::{
         channels_sv2::client::{extended::ExtendedChannel, group::GroupChannel},
         codec_sv2::StandardSv2Frame,
@@ -92,6 +93,8 @@ pub struct ChannelManager {
     /// Tracks whether the single upstream channel in aggregated mode is absent,
     /// being established, or connected.
     pub aggregated_channel_state: AtomicAggregatedState,
+    /// Expected coinbase payout distribution derived from `user_identity`.
+    pub(crate) expected_payout_distribution: Option<PayoutMode>,
 }
 
 #[cfg_attr(not(test), hotpath::measure_all)]
@@ -120,6 +123,7 @@ impl ChannelManager {
         status_sender: Sender<Status>,
         supported_extensions: Vec<u16>,
         required_extensions: Vec<u16>,
+        expected_payout_distribution: Option<PayoutMode>,
     ) -> Self {
         let channel_state = ChannelState::new(
             upstream_sender,
@@ -140,6 +144,7 @@ impl ChannelManager {
             negotiated_extensions: Arc::new(Mutex::new(Vec::new())),
             extranonce_factories: Arc::new(DashMap::new()),
             aggregated_channel_state: AtomicAggregatedState::new(AggregatedState::NoChannel),
+            expected_payout_distribution,
         }
     }
 
@@ -810,6 +815,7 @@ mod tests {
             status_sender,
             vec![],
             vec![],
+            None,
         )
     }
 

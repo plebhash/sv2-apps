@@ -449,6 +449,14 @@ impl HandleMiningMessagesFromServerAsync for ChannelManager {
         _tlv_fields: Option<&[Tlv]>,
     ) -> Result<(), Self::Error> {
         info!("Received: {}", m);
+        if let Some(expected_payout_distribution) = &self.expected_payout_distribution {
+            expected_payout_distribution
+                .validate_coinbase_tx_suffix(m.coinbase_tx_suffix.inner_as_ref())
+                .map_err(|e| {
+                    error!("NewExtendedMiningJob failed payout verification: {e}");
+                    TproxyError::fallback(TproxyErrorKind::PayoutVerificationFailed(e.to_string()))
+                })?;
+        }
         let m_static = m.clone().into_static();
 
         // we update the channel states and keep track of the messages that need to be sent to the

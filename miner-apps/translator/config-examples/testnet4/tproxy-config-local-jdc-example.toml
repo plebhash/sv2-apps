@@ -16,6 +16,12 @@ downstream_extranonce2_size = 4
 # This will be appended with a counter for each mining client (e.g., username.miner1, username.miner2)
 user_identity = "your_username_here"
 
+# If true, tProxy verifies upstream coinbase outputs against the payout encoded by user_identity.
+# Keep false for standard pool mining, including pools that use a Bitcoin address as the username.
+# Enable for solo/donation identities: sri/solo/<address>/<worker>,
+# sri/donate/<percentage>/<address>/<worker>, or legacy <address>[.worker].
+verify_payout = false
+
 # Aggregate channels: if true, all miners share one upstream channel; if false, each miner gets its own channel
 aggregate_channels = false
 

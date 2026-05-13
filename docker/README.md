@@ -131,6 +131,8 @@ If something behaves weirdly, 99% of the time your `docker_env` is the culprit.
 
 * Port **34255**
 * Upstream target (JDC or pool) is fully controlled via `docker_env` variables
+* `TPROXY_VERIFY_PAYOUT=false` is the standard pool-mining default; set it to `true` only for
+  solo/donation identities where `TPROXY_USER_IDENTITY` encodes the expected on-chain payout
 
 ---
 

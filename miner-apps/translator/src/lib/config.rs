@@ -17,6 +17,7 @@ use std::net::SocketAddr;
 use stratum_apps::{
     config_helpers::opt_path_from_toml,
     key_utils::Secp256k1PublicKey,
+    payout::{MissingMinerPayoutMode, PayoutMode, PayoutModeError},
     utils::types::{Hashrate, SharesPerMinute},
 };
 
@@ -38,6 +39,10 @@ pub struct TranslatorConfig {
     /// This will be appended with a counter for each mining channel (e.g., username.miner1,
     /// username.miner2).
     pub user_identity: String,
+    /// Whether to verify upstream coinbase outputs against a payout address encoded in
+    /// `user_identity`.
+    #[serde(default)]
+    pub verify_payout: bool,
     /// Configuration settings for managing difficulty on the downstream connection.
     pub downstream_difficulty_config: DownstreamDifficultyConfig,
     /// Whether to aggregate all downstream connections into a single upstream channel.
@@ -95,6 +100,7 @@ impl TranslatorConfig {
         min_supported_version: u16,
         downstream_extranonce2_size: u16,
         user_identity: String,
+        verify_payout: bool,
         aggregate_channels: bool,
         supported_extensions: Vec<u16>,
         required_extensions: Vec<u16>,
@@ -109,6 +115,7 @@ impl TranslatorConfig {
             min_supported_version,
             downstream_extranonce2_size,
             user_identity,
+            verify_payout,
             downstream_difficulty_config,
             aggregate_channels,
             supported_extensions,
@@ -127,6 +134,29 @@ impl TranslatorConfig {
     /// Returns the monitoring cache refresh interval in seconds.
     pub fn monitoring_cache_refresh_secs(&self) -> Option<u64> {
         self.monitoring_cache_refresh_secs
+    }
+
+    pub(crate) fn expected_payout_distribution(
+        &self,
+    ) -> Result<Option<PayoutMode>, PayoutModeError> {
+        if !self.verify_payout {
+            return Ok(None);
+        }
+
+        match PayoutMode::try_from(self.user_identity.as_str()) {
+            Ok(payout_mode @ (PayoutMode::Solo { .. } | PayoutMode::Donate { .. })) => {
+                Ok(Some(payout_mode))
+            }
+            Ok(PayoutMode::FullDonation) => Err(PayoutModeError::MissingMinerPayout {
+                user_identity: self.user_identity.clone(),
+                mode: MissingMinerPayoutMode::FullDonation,
+            }),
+            Err(PayoutModeError::NoPayoutMode(_)) => Err(PayoutModeError::MissingMinerPayout {
+                user_identity: self.user_identity.clone(),
+                mode: MissingMinerPayoutMode::NoPayoutMode,
+            }),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn set_log_dir(&mut self, log_dir: Option<PathBuf>) {
@@ -219,6 +249,7 @@ mod tests {
             1,
             4,
             "test_user".to_string(),
+            false,
             true,
             vec![],
             vec![],
@@ -233,10 +264,129 @@ mod tests {
         assert_eq!(config.min_supported_version, 1);
         assert_eq!(config.downstream_extranonce2_size, 4);
         assert_eq!(config.user_identity, "test_user");
+        assert!(!config.verify_payout);
         assert!(config.aggregate_channels);
         assert!(config.supported_extensions.is_empty());
         assert!(config.required_extensions.is_empty());
         assert!(config.log_file.is_none());
+    }
+
+    #[test]
+    fn payout_verification_requires_explicit_opt_in() {
+        let upstreams = vec![create_test_upstream()];
+        let difficulty_config = create_test_difficulty_config();
+        let payout_address = "bc1qtzqxqaxyy6lda2fhdtp5dp0v56vlf6g0tljy2x";
+
+        let disabled_config = TranslatorConfig::new(
+            upstreams.clone(),
+            "0.0.0.0".to_string(),
+            3333,
+            difficulty_config.clone(),
+            2,
+            1,
+            4,
+            payout_address.to_string(),
+            false,
+            true,
+            vec![],
+            vec![],
+            None,
+            None,
+        );
+
+        assert!(disabled_config
+            .expected_payout_distribution()
+            .unwrap()
+            .is_none());
+
+        let enabled_config = TranslatorConfig::new(
+            upstreams,
+            "0.0.0.0".to_string(),
+            3333,
+            difficulty_config,
+            2,
+            1,
+            4,
+            payout_address.to_string(),
+            true,
+            true,
+            vec![],
+            vec![],
+            None,
+            None,
+        );
+
+        assert!(matches!(
+            enabled_config.expected_payout_distribution().unwrap(),
+            Some(PayoutMode::Solo { .. })
+        ));
+    }
+
+    #[test]
+    fn payout_verification_requires_miner_payout_identity() {
+        let config = TranslatorConfig::new(
+            vec![create_test_upstream()],
+            "0.0.0.0".to_string(),
+            3333,
+            create_test_difficulty_config(),
+            2,
+            1,
+            4,
+            "sri/donate/worker".to_string(),
+            true,
+            true,
+            vec![],
+            vec![],
+            None,
+            None,
+        );
+
+        assert!(matches!(
+            config.expected_payout_distribution().unwrap_err(),
+            PayoutModeError::MissingMinerPayout {
+                mode: MissingMinerPayoutMode::FullDonation,
+                ..
+            }
+        ));
+
+        let mut config = config;
+        config.user_identity = "invalid_address.worker".to_string();
+
+        assert!(matches!(
+            config.expected_payout_distribution().unwrap_err(),
+            PayoutModeError::MissingMinerPayout {
+                mode: MissingMinerPayoutMode::NoPayoutMode,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn payout_verification_rejects_address_like_typos() {
+        let config = TranslatorConfig::new(
+            vec![create_test_upstream()],
+            "0.0.0.0".to_string(),
+            3333,
+            create_test_difficulty_config(),
+            2,
+            1,
+            4,
+            "bc1q_typo.worker".to_string(),
+            true,
+            true,
+            vec![],
+            vec![],
+            None,
+            None,
+        );
+
+        assert!(matches!(
+            config.expected_payout_distribution().unwrap_err(),
+            PayoutModeError::MissingMinerPayout {
+                mode: MissingMinerPayoutMode::NoPayoutMode,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -253,6 +403,7 @@ mod tests {
             1,
             4,
             "test_user".to_string(),
+            false,
             false,
             vec![],
             vec![],
@@ -289,6 +440,7 @@ mod tests {
             1,
             4,
             "test_user".to_string(),
+            false,
             true,
             vec![],
             vec![],
@@ -318,6 +470,7 @@ mod tests {
             1,
             4,
             "test_user".to_string(),
+            false,
             false,
             vec![],
             vec![],

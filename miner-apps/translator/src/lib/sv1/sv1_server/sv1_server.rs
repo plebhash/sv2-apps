@@ -1366,6 +1366,7 @@ mod tests {
             1,                     // min_supported_version
             4,                     // downstream_extranonce2_size
             "test_user".to_string(),
+            false,  // verify_payout
             true,   // aggregate_channels
             vec![], // supported_extensions
             vec![], // required_extensions

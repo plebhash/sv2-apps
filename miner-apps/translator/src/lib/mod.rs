@@ -93,6 +93,21 @@ impl TranslatorSv2 {
 
         let cancellation_token = self.cancellation_token.clone();
         let mut fallback_coordinator = FallbackCoordinator::new();
+        let expected_payout_distribution = match self.config.expected_payout_distribution() {
+            Ok(distribution) => distribution,
+            Err(e) => {
+                error!("Invalid payout user_identity configuration: {e}");
+                self.shutdown_notify.notify_waiters();
+                self.is_alive.store(false, Ordering::Relaxed);
+                return;
+            }
+        };
+        if let Some(distribution) = &expected_payout_distribution {
+            info!(
+                "Payout verification enabled for configured user_identity: {}",
+                distribution
+            );
+        }
 
         let task_manager = Arc::new(TaskManager::new());
         let (status_sender, status_receiver) = async_channel::unbounded::<Status>();
@@ -162,6 +177,7 @@ impl TranslatorSv2 {
             status_sender.clone(),
             self.config.supported_extensions.clone(),
             self.config.required_extensions.clone(),
+            expected_payout_distribution.clone(),
         ));
 
         info!("Launching ChannelManager tasks...");
@@ -309,6 +325,7 @@ impl TranslatorSv2 {
                                     status_sender.clone(),
                                     self.config.supported_extensions.clone(),
                                     self.config.required_extensions.clone(),
+                                    expected_payout_distribution.clone(),
                                 ));
 
                                 info!("Launching ChannelManager tasks...");

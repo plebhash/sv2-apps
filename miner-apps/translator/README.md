@@ -37,8 +37,12 @@ min_supported_version = 2
 # Extranonce Configuration
 downstream_extranonce2_size = 4  # Min: 2, Max: 16 (CGminer max: 8)
 
-# User Identity (appended with counter for each miner)
+# User Identity (appended with counter for each miner unless it starts with `sri/`)
 user_identity = "your_username_here"
+
+# Payout verification is opt-in. Keep false for standard pool mining,
+# including pools that use a Bitcoin address as the username.
+verify_payout = false
 
 # Channel Configuration
 aggregate_channels = true  # true: shared channel, false: individual channels
@@ -78,6 +82,20 @@ Make sure the machine running the Translator Proxy has its clock synced with an 
   - `true`: All miners share one upstream extended channel (more efficient)
   - `false`: Each miner gets its own upstream extended channel (more isolated)
 - `user_identity`: Username for pool authentication (auto-suffixed per miner)
+- `verify_payout`: When `true`, verify upstream coinbase payouts against a payout address encoded
+  by `user_identity`. Keep `false` for standard pool mining, including pools that use a Bitcoin
+  address as the username.
+
+#### **Solo/Donation Payout Verification**
+Payout verification is disabled by default. Set `verify_payout = true` for solo mining or
+donation configurations where `user_identity` intentionally encodes an on-chain payout address:
+
+- `sri/solo/<payout_address>/<worker>`: tProxy verifies every upstream extended job pays 100% of spendable coinbase outputs to `<payout_address>`
+- `<payout_address>[.worker]`: legacy solo mode, verified as 100% miner payout when `verify_payout = true`
+- `sri/donate/<pool_percentage>/<payout_address>/<worker>`: tProxy verifies the miner address receives the remaining percentage
+- `sri/donate/<worker>`: full donation mode; keep `verify_payout = false` because no miner payout address is present
+
+If verification fails, tProxy triggers upstream fallback instead of forwarding the job to SV1 miners.
 
 #### **Difficulty Configuration**
 - `min_individual_miner_hashrate`: Expected hashrate of weakest miner (in H/s)
@@ -144,6 +162,7 @@ For connecting to a local SV2 pool server:
 downstream_address = "0.0.0.0"
 downstream_port = 34255
 user_identity = "miner_farm_1"
+verify_payout = false
 aggregate_channels = true
 
 [downstream_difficulty_config]
@@ -164,6 +183,7 @@ For production environments with failover:
 downstream_address = "0.0.0.0"
 downstream_port = 34255
 user_identity = "production_farm"
+verify_payout = false
 aggregate_channels = true
 
 [downstream_difficulty_config]
