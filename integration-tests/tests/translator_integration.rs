@@ -7,7 +7,13 @@ use integration_tests_sv2::{
     utils::get_available_address,
     *,
 };
-use stratum_apps::stratum_core::mining_sv2::*;
+use stratum_apps::{
+    config_helpers::CoinbaseRewardScript,
+    stratum_core::{
+        bitcoin::{consensus::serialize, Amount, TxOut},
+        mining_sv2::*,
+    },
+};
 use tokio::net::{TcpListener, TcpStream};
 
 use std::{
@@ -29,6 +35,8 @@ use stratum_apps::stratum_core::{
     sv1_api,
     template_distribution_sv2::MESSAGE_TYPE_SUBMIT_SOLUTION,
 };
+
+const PAYOUT_VERIFICATION_MINER_ADDRESS: &str = "tb1qpusf5256yxv50qt0pm0tue8k952fsu5lzsphft";
 
 // This test runs an sv2 translator between an sv1 mining device and a pool. the connection between
 // the translator and the pool is intercepted by a sniffer. The test checks if the translator and
@@ -85,6 +93,302 @@ async fn translate_sv1_to_sv2_successfully() {
         )
         .await;
     shutdown_all!(translator, pool);
+}
+
+/// Checks that tProxy mines when payout verification passes for address and donation identities.
+#[tokio::test]
+async fn translator_mines_when_payout_matches_address_or_donation_identity() {
+    start_tracing();
+
+    let miner_script_pubkey = CoinbaseRewardScript::from_descriptor(&format!(
+        "addr({PAYOUT_VERIFICATION_MINER_ADDRESS})"
+    ))
+    .unwrap()
+    .script_pubkey();
+    let pool_script_pubkey =
+        CoinbaseRewardScript::from_descriptor(&format!("addr({POOL_COINBASE_REWARD_ADDRESS})"))
+            .unwrap()
+            .script_pubkey();
+
+    let mut solo_coinbase_tx_suffix = hex::decode("feffffff").unwrap();
+    solo_coinbase_tx_suffix.extend(serialize(&vec![TxOut {
+        value: Amount::from_sat(5_000_000_000),
+        script_pubkey: miner_script_pubkey.clone(),
+    }]));
+    solo_coinbase_tx_suffix.extend([0, 0, 0, 0]);
+
+    let mut partial_donation_coinbase_tx_suffix = hex::decode("feffffff").unwrap();
+    partial_donation_coinbase_tx_suffix.extend(serialize(&vec![
+        TxOut {
+            value: Amount::from_sat(500_000_000),
+            script_pubkey: pool_script_pubkey,
+        },
+        TxOut {
+            value: Amount::from_sat(4_500_000_000),
+            script_pubkey: miner_script_pubkey,
+        },
+    ]));
+    partial_donation_coinbase_tx_suffix.extend([0, 0, 0, 0]);
+
+    for (identifier, user_identity, coinbase_tx_suffix) in [
+        (
+            "payout-address",
+            PAYOUT_VERIFICATION_MINER_ADDRESS.to_string(),
+            solo_coinbase_tx_suffix,
+        ),
+        (
+            "payout-donation",
+            format!("sri/donate/10/{PAYOUT_VERIFICATION_MINER_ADDRESS}/worker"),
+            partial_donation_coinbase_tx_suffix,
+        ),
+    ] {
+        let mock_upstream_addr = get_available_address();
+        let send_to_tproxy = MockUpstream::new(
+            mock_upstream_addr,
+            WithSetup::yes_with_defaults(Protocol::MiningProtocol, 0),
+        )
+        .start()
+        .await;
+        let (sniffer, sniffer_addr) =
+            start_sniffer(identifier, mock_upstream_addr, false, vec![], None);
+
+        let (translator, tproxy_addr, _) = start_sv2_translator_with_user_identity(
+            &[sniffer_addr],
+            false,
+            vec![],
+            vec![],
+            None,
+            user_identity,
+            true,
+            false,
+        )
+        .await;
+        let (_minerd_process, _minerd_addr) = start_minerd(tproxy_addr, None, None, false).await;
+
+        sniffer
+            .wait_for_message_type(
+                MessageDirection::ToUpstream,
+                MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL,
+            )
+            .await;
+        let open_extended_mining_channel: OpenExtendedMiningChannel = loop {
+            match sniffer.next_message_from_downstream() {
+                Some((
+                    _,
+                    AnyMessage::Mining(parsers_sv2::Mining::OpenExtendedMiningChannel(msg)),
+                )) => break msg,
+                _ => continue,
+            };
+        };
+
+        send_to_tproxy
+            .send(AnyMessage::Mining(
+                parsers_sv2::Mining::OpenExtendedMiningChannelSuccess(
+                    OpenExtendedMiningChannelSuccess {
+                        request_id: open_extended_mining_channel.request_id,
+                        channel_id: 0,
+                        target: hex::decode(
+                            "0000137c578190689425e3ecf8449a1af39db0aed305d9206f45ac32fe8330fc",
+                        )
+                        .unwrap()
+                        .try_into()
+                        .unwrap(),
+                        extranonce_size: 4,
+                        extranonce_prefix: vec![0x00, 0x01, 0x00, 0x00].try_into().unwrap(),
+                        group_channel_id: 100,
+                    },
+                ),
+            ))
+            .await
+            .unwrap();
+
+        send_to_tproxy
+            .send(AnyMessage::Mining(parsers_sv2::Mining::NewExtendedMiningJob(NewExtendedMiningJob {
+                channel_id: 0,
+                job_id: 1,
+                min_ntime: Sv2Option::new(None),
+                version: 0x20000000,
+                version_rolling_allowed: true,
+                merkle_path: Seq0255::new(vec![]).unwrap(),
+                coinbase_tx_prefix: hex::decode("02000000010000000000000000000000000000000000000000000000000000000000000000ffffffff225200162f5374726174756d2056322053524920506f6f6c2f2f08").unwrap().try_into().unwrap(),
+                coinbase_tx_suffix: coinbase_tx_suffix.try_into().unwrap(),
+            })))
+            .await
+            .unwrap();
+        sniffer
+            .wait_for_message_type(
+                MessageDirection::ToDownstream,
+                MESSAGE_TYPE_NEW_EXTENDED_MINING_JOB,
+            )
+            .await;
+
+        send_to_tproxy
+            .send(AnyMessage::Mining(parsers_sv2::Mining::SetNewPrevHash(
+                SetNewPrevHash {
+                    channel_id: 0,
+                    job_id: 1,
+                    prev_hash: hex::decode(
+                        "3ab7089cd2cd30f133552cfde82c4cb239cd3c2310306f9d825e088a1772cc39",
+                    )
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                    min_ntime: 1766782170,
+                    nbits: 0x207fffff,
+                },
+            )))
+            .await
+            .unwrap();
+        sniffer
+            .wait_for_message_type(
+                MessageDirection::ToDownstream,
+                MESSAGE_TYPE_MINING_SET_NEW_PREV_HASH,
+            )
+            .await;
+
+        sniffer
+            .wait_for_message_type(
+                MessageDirection::ToUpstream,
+                MESSAGE_TYPE_SUBMIT_SHARES_EXTENDED,
+            )
+            .await;
+
+        translator.shutdown().await;
+    }
+}
+
+/// Checks that tProxy falls back when the upstream job pays the wrong address.
+#[tokio::test]
+async fn translator_falls_back_when_payout_does_not_match_user_identity() {
+    start_tracing();
+
+    let mut wrong_coinbase_tx_suffix = hex::decode("feffffff").unwrap();
+    wrong_coinbase_tx_suffix.extend(serialize(&vec![TxOut {
+        value: Amount::from_sat(5_000_000_000),
+        script_pubkey: CoinbaseRewardScript::from_descriptor(&format!(
+            "addr({POOL_COINBASE_REWARD_ADDRESS})"
+        ))
+        .unwrap()
+        .script_pubkey(),
+    }]));
+    wrong_coinbase_tx_suffix.extend([0, 0, 0, 0]);
+
+    let primary_upstream_addr = get_available_address();
+    let primary_sender = MockUpstream::new(
+        primary_upstream_addr,
+        WithSetup::yes_with_defaults(Protocol::MiningProtocol, 0),
+    )
+    .start()
+    .await;
+    let (primary_sniffer, primary_sniffer_addr) = start_sniffer(
+        "payout-bad-primary",
+        primary_upstream_addr,
+        false,
+        vec![],
+        None,
+    );
+
+    let fallback_upstream_addr = get_available_address();
+    let _fallback_sender = MockUpstream::new(
+        fallback_upstream_addr,
+        WithSetup::yes_with_defaults(Protocol::MiningProtocol, 0),
+    )
+    .start()
+    .await;
+    let (fallback_sniffer, fallback_sniffer_addr) = start_sniffer(
+        "payout-fallback",
+        fallback_upstream_addr,
+        false,
+        vec![],
+        None,
+    );
+
+    let (translator, tproxy_addr, _) = start_sv2_translator_with_user_identity(
+        &[primary_sniffer_addr, fallback_sniffer_addr],
+        false,
+        vec![],
+        vec![],
+        None,
+        PAYOUT_VERIFICATION_MINER_ADDRESS.to_string(),
+        true,
+        false,
+    )
+    .await;
+    let (minerd_process, _minerd_addr) = start_minerd(tproxy_addr, None, None, false).await;
+
+    primary_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToUpstream,
+            MESSAGE_TYPE_OPEN_EXTENDED_MINING_CHANNEL,
+        )
+        .await;
+    let open_extended_mining_channel: OpenExtendedMiningChannel = loop {
+        match primary_sniffer.next_message_from_downstream() {
+            Some((_, AnyMessage::Mining(parsers_sv2::Mining::OpenExtendedMiningChannel(msg)))) => {
+                break msg
+            }
+            _ => continue,
+        };
+    };
+
+    primary_sender
+        .send(AnyMessage::Mining(
+            parsers_sv2::Mining::OpenExtendedMiningChannelSuccess(
+                OpenExtendedMiningChannelSuccess {
+                    request_id: open_extended_mining_channel.request_id,
+                    channel_id: 0,
+                    target: hex::decode(
+                        "0000137c578190689425e3ecf8449a1af39db0aed305d9206f45ac32fe8330fc",
+                    )
+                    .unwrap()
+                    .try_into()
+                    .unwrap(),
+                    extranonce_size: 4,
+                    extranonce_prefix: vec![0x00, 0x01, 0x00, 0x00].try_into().unwrap(),
+                    group_channel_id: 100,
+                },
+            ),
+        ))
+        .await
+        .unwrap();
+
+    primary_sender
+        .send(AnyMessage::Mining(parsers_sv2::Mining::NewExtendedMiningJob(NewExtendedMiningJob {
+            channel_id: 0,
+            job_id: 1,
+            min_ntime: Sv2Option::new(None),
+            version: 0x20000000,
+            version_rolling_allowed: true,
+            merkle_path: Seq0255::new(vec![]).unwrap(),
+            coinbase_tx_prefix: hex::decode("02000000010000000000000000000000000000000000000000000000000000000000000000ffffffff225200162f5374726174756d2056322053524920506f6f6c2f2f08").unwrap().try_into().unwrap(),
+            coinbase_tx_suffix: wrong_coinbase_tx_suffix.try_into().unwrap(),
+        })))
+        .await
+        .unwrap();
+    primary_sniffer
+        .wait_for_message_type(
+            MessageDirection::ToDownstream,
+            MESSAGE_TYPE_NEW_EXTENDED_MINING_JOB,
+        )
+        .await;
+
+    assert!(
+        primary_sniffer
+            .assert_message_not_present(
+                MessageDirection::ToUpstream,
+                MESSAGE_TYPE_SUBMIT_SHARES_EXTENDED,
+                Duration::from_secs(2),
+            )
+            .await,
+        "tProxy should not submit shares to the upstream that failed payout verification"
+    );
+
+    fallback_sniffer
+        .wait_for_message_type(MessageDirection::ToUpstream, MESSAGE_TYPE_SETUP_CONNECTION)
+        .await;
+
+    drop(minerd_process);
+    translator.shutdown().await;
 }
 
 // Demonstrates the scenario where TProxy falls back to the secondary pool

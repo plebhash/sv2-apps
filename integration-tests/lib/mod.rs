@@ -339,6 +339,30 @@ pub async fn start_sv2_translator(
     job_keepalive_interval_secs: Option<u16>,
     enable_monitoring: bool,
 ) -> (TranslatorSv2, SocketAddr, Option<SocketAddr>) {
+    start_sv2_translator_with_user_identity(
+        upstreams,
+        aggregate_channels,
+        supported_extensions,
+        required_extensions,
+        job_keepalive_interval_secs,
+        "user_identity".to_string(),
+        false,
+        enable_monitoring,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn start_sv2_translator_with_user_identity(
+    upstreams: &[SocketAddr],
+    aggregate_channels: bool,
+    supported_extensions: Vec<u16>,
+    required_extensions: Vec<u16>,
+    job_keepalive_interval_secs: Option<u16>,
+    user_identity: String,
+    verify_payout: bool,
+    enable_monitoring: bool,
+) -> (TranslatorSv2, SocketAddr, Option<SocketAddr>) {
     let job_keepalive_interval_secs = job_keepalive_interval_secs.unwrap_or(60);
     let upstreams = upstreams
         .iter()
@@ -389,7 +413,8 @@ pub async fn start_sv2_translator(
         2,
         2,
         downstream_extranonce2_size,
-        "user_identity".to_string(),
+        user_identity,
+        verify_payout,
         aggregate_channels,
         supported_extensions,
         required_extensions,
