@@ -54,6 +54,8 @@ pub struct DownstreamData {
         HashMap<ChannelId, ExtendedChannel<'static, DefaultJobStore<ExtendedJob<'static>>>>,
     pub standard_channels:
         HashMap<ChannelId, StandardChannel<'static, DefaultJobStore<StandardJob<'static>>>>,
+    /// Per-channel vardiff stability flag used by monitoring output.
+    pub stable_hashrate_by_channel: HashMap<ChannelId, bool>,
     pub channel_id_factory: AtomicU32,
     /// Extensions that have been successfully negotiated with this client
     pub negotiated_extensions: Vec<u16>,
@@ -137,6 +139,7 @@ impl Downstream {
         let downstream_data = Arc::new(Mutex::new(DownstreamData {
             extended_channels: HashMap::new(),
             standard_channels: HashMap::new(),
+            stable_hashrate_by_channel: HashMap::new(),
             group_channel,
             channel_id_factory,
             negotiated_extensions: vec![],
