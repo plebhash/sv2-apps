@@ -1,6 +1,6 @@
 [package]
 name = "pool_sv2"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["The Stratum V2 Developers"]
 edition = "2021"
 description = "SV2 pool role"
@@ -17,7 +17,7 @@ name = "pool_sv2"
 path = "src/lib/mod.rs"
 
 [dependencies]
-stratum-apps = { version = "0.3.0", path = "../../stratum-apps", features = ["pool"] }
+stratum-apps = { version = "0.3.3", path = "../../stratum-apps", features = ["pool"] }
 async-channel = "1.5.1"
 serde = { version = "1.0.89", features = ["derive", "alloc"], default-features = false }
 tokio = { version = "1.44.1", features = ["full"] }
