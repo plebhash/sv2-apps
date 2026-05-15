@@ -29,6 +29,7 @@ pub struct DownstreamData {
     pub cached_notify: Option<json_rpc::Message>,
     pub pending_target: Option<Target>,
     pub pending_hashrate: Option<Hashrate>,
+    pub stable_hashrate: bool,
     // Queue of Sv1 handshake messages received while waiting for SV2 channel to open
     pub queued_sv1_handshake_messages: Vec<json_rpc::Message>,
     // Stores pending shares to be sent to the sv1_server
@@ -58,6 +59,7 @@ impl DownstreamData {
             cached_notify: None,
             pending_target: None,
             pending_hashrate: None,
+            stable_hashrate: false,
             queued_sv1_handshake_messages: Vec::new(),
             pending_share: None,
             upstream_target: None,

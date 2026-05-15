@@ -102,6 +102,7 @@ impl Sv1Server {
                     _ = d.downstream_data.safe_lock(|data| {
                         data.set_pending_target(new_target, d.downstream_id);
                         data.set_pending_hashrate(Some(new_hashrate), d.downstream_id);
+                        data.stable_hashrate = false;
                     });
                 }
                 // All updates will be sent as UpdateChannel messages
@@ -141,6 +142,12 @@ impl Sv1Server {
                         );
                         immediate_updates.push((channel_id, Some(*downstream_id), new_target));
                     }
+                }
+            } else if let Ok(None) = new_hashrate_opt {
+                if let Some(d) = self.downstreams.get(downstream_id) {
+                    _ = d.downstream_data.safe_lock(|data| {
+                        data.stable_hashrate = true;
+                    });
                 }
             }
         }
