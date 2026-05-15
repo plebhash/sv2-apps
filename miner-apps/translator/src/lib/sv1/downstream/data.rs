@@ -29,6 +29,7 @@ pub struct DownstreamData {
     pub cached_notify: Option<json_rpc::Message>,
     pub pending_target: Option<Target>,
     pub pending_hashrate: Option<Hashrate>,
+    // True when vardiff has converged and no new hashrate update is pending.
     pub stable_hashrate: bool,
     // Queue of Sv1 handshake messages received while waiting for SV2 channel to open
     pub queued_sv1_handshake_messages: Vec<json_rpc::Message>,

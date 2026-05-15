@@ -72,12 +72,17 @@ fn downstream_to_sv2_client_info(client: &Downstream) -> Option<Sv2ClientInfo> {
                 let requested_max_target = extended_channel.get_requested_max_target();
                 let user_identity = extended_channel.get_user_identity();
                 let share_accounting = extended_channel.get_share_accounting();
+                let stable_hashrate = dd
+                    .stable_hashrate_by_channel
+                    .get(&channel_id)
+                    .copied()
+                    .unwrap_or(false);
 
                 extended_channels.push(ExtendedChannelInfo {
                     channel_id,
                     user_identity: user_identity.clone(),
                     nominal_hashrate: extended_channel.get_nominal_hashrate(),
-                    stable_hashrate: extended_channel.get_stable_hashrate(),
+                    stable_hashrate,
                     target_hex: hex::encode(target.to_be_bytes()),
                     requested_max_target_hex: hex::encode(requested_max_target.to_be_bytes()),
                     extranonce_prefix_hex: hex::encode(extended_channel.get_extranonce_prefix()),
@@ -101,12 +106,17 @@ fn downstream_to_sv2_client_info(client: &Downstream) -> Option<Sv2ClientInfo> {
                 let requested_max_target = standard_channel.get_requested_max_target();
                 let user_identity = standard_channel.get_user_identity();
                 let share_accounting = standard_channel.get_share_accounting();
+                let stable_hashrate = dd
+                    .stable_hashrate_by_channel
+                    .get(&channel_id)
+                    .copied()
+                    .unwrap_or(false);
 
                 standard_channels.push(StandardChannelInfo {
                     channel_id,
                     user_identity: user_identity.clone(),
                     nominal_hashrate: standard_channel.get_nominal_hashrate(),
-                    stable_hashrate: standard_channel.get_stable_hashrate(),
+                    stable_hashrate,
                     target_hex: hex::encode(target.to_be_bytes()),
                     requested_max_target_hex: hex::encode(requested_max_target.to_be_bytes()),
                     extranonce_prefix_hex: hex::encode(standard_channel.get_extranonce_prefix()),

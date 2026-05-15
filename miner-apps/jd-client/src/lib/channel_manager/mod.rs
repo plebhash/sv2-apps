@@ -1014,7 +1014,7 @@ impl ChannelManager {
         >,
         vardiff_state: &mut VardiffState,
         updates: &mut Vec<RouteMessageTo>,
-    ) {
+    ) -> Option<bool> {
         let (hashrate, target, shares_per_minute) = (
             channel_state.get_nominal_hashrate(),
             channel_state.get_target(),
@@ -1024,15 +1024,12 @@ impl ChannelManager {
         let Ok(new_hashrate_opt) = vardiff_state.try_vardiff(hashrate, target, shares_per_minute)
         else {
             debug!("Vardiff computation failed for extended channel {channel_id}");
-            return;
+            return None;
         };
 
         let Some(new_hashrate) = new_hashrate_opt else {
-            channel_state.set_stable_hashrate(true);
-            return;
+            return Some(true);
         };
-
-        channel_state.set_stable_hashrate(false);
 
         match channel_state.update_channel(new_hashrate, None) {
             Ok(()) => {
@@ -1053,6 +1050,7 @@ impl ChannelManager {
                 "Failed to update extended channel channel_id={channel_id} during vardiff {e:?}"
             ),
         }
+        Some(false)
     }
 
     // Runs the vardiff on the standard channel.
@@ -1062,7 +1060,7 @@ impl ChannelManager {
         channel: &mut StandardChannel<'static, DefaultJobStore<StandardJob<'static>>>,
         vardiff_state: &mut VardiffState,
         updates: &mut Vec<RouteMessageTo>,
-    ) {
+    ) -> Option<bool> {
         let hashrate = channel.get_nominal_hashrate();
         let target = channel.get_target();
         let shares_per_minute = channel.get_shares_per_minute();
@@ -1070,11 +1068,10 @@ impl ChannelManager {
         let Ok(new_hashrate_opt) = vardiff_state.try_vardiff(hashrate, target, shares_per_minute)
         else {
             debug!("Vardiff computation failed for standard channel {channel_id}");
-            return;
+            return None;
         };
 
         if let Some(new_hashrate) = new_hashrate_opt {
-            channel.set_stable_hashrate(false);
             match channel.update_channel(new_hashrate, None) {
                 Ok(()) => {
                     let updated_target = channel.get_target();
@@ -1094,8 +1091,9 @@ impl ChannelManager {
                     "Failed to update standard channel channel_id={channel_id} during vardiff {e:?}"
                 ),
             }
+            Some(false)
         } else {
-            channel.set_stable_hashrate(true);
+            Some(true)
         }
     }
 
@@ -1137,22 +1135,26 @@ impl ChannelManager {
                     };
                     downstream.downstream_data.super_safe_lock(|data| {
                         if let Some(standard_channel) = data.standard_channels.get_mut(channel_id) {
-                            Self::run_vardiff_on_standard_channel(
+                            if let Some(stable) = Self::run_vardiff_on_standard_channel(
                                 *downstream_id,
                                 *channel_id,
                                 standard_channel,
                                 vardiff_state,
                                 &mut messages,
-                            );
+                            ) {
+                                data.stable_hashrate_by_channel.insert(*channel_id, stable);
+                            }
                         }
                         if let Some(extended_channel) = data.extended_channels.get_mut(channel_id) {
-                            Self::run_vardiff_on_extended_channel(
+                            if let Some(stable) = Self::run_vardiff_on_extended_channel(
                                 *downstream_id,
                                 *channel_id,
                                 extended_channel,
                                 vardiff_state,
                                 &mut messages,
-                            );
+                            ) {
+                                data.stable_hashrate_by_channel.insert(*channel_id, stable);
+                            }
                         }
                     });
                 }
