@@ -3,9 +3,9 @@
 //! This module provides connection management, encrypted streams, and protocol handling
 //! for Stratum V2 applications. It includes support for:
 //!
-//! - Noise-encrypted connections ([`noise_connection`], [`noise_stream`])
-//! - SV1 protocol connections ([`sv1_connection`]) - when `sv1` feature is enabled
-//! - Hostname resolution ([`resolve_hostname`])
+//! - Noise-encrypted connections ([`crate::network_helpers::noise_connection`], [`crate::network_helpers::noise_stream`])
+//! - SV1 protocol connections (`sv1_connection`) - when `sv1` feature is enabled
+//! - Hostname resolution ([`crate::network_helpers::resolve_hostname`])
 //!
 //! Originally from the `network_helpers_sv2` crate.
 
@@ -103,7 +103,7 @@ impl From<ResolveError> for Error {
 
 /// Default handshake timeout used by [`connect_with_noise`] and [`accept_noise_connection`].
 /// Use [`noise_stream::NoiseTcpStream::new`] directly to override.
-const NOISE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub const NOISE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Default timeout for establishing outbound TCP connections to SV2 peers.
 /// This keeps fallback attempts bounded when a remote endpoint is unreachable or filtered.
