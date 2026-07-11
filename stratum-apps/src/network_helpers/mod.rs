@@ -103,7 +103,7 @@ impl From<ResolveError> for Error {
 
 /// Default handshake timeout used by [`connect_with_noise`] and [`accept_noise_connection`].
 /// Use [`noise_stream::NoiseTcpStream::new`] directly to override.
-pub const NOISE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const NOISE_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Default timeout for establishing outbound TCP connections to SV2 peers.
 /// This keeps fallback attempts bounded when a remote endpoint is unreachable or filtered.
@@ -111,7 +111,7 @@ pub const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Connects to an upstream server as a Noise initiator, returning the split read/write halves.
 ///
-/// The handshake timeout is opinionated and fixed at [`NOISE_HANDSHAKE_TIMEOUT`]. If you need a
+/// The handshake timeout is opinionated and fixed at `NOISE_HANDSHAKE_TIMEOUT`. If you need a
 /// custom timeout, use [`noise_stream::NoiseTcpStream::new`] directly.
 ///
 /// Pass `Some(key)` to verify the server's authority public key, or `None` to skip
@@ -138,7 +138,7 @@ where
 
 /// Accepts a downstream connection as a Noise responder, returning the split read/write halves.
 ///
-/// The handshake timeout is opinionated and fixed at [`NOISE_HANDSHAKE_TIMEOUT`]. If you need a
+/// The handshake timeout is opinionated and fixed at `NOISE_HANDSHAKE_TIMEOUT`. If you need a
 /// custom timeout, use [`noise_stream::NoiseTcpStream::new`] directly.
 ///
 /// `cert_validity` controls how long the generated Noise certificate is valid,

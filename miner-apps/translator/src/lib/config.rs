@@ -7,7 +7,7 @@
 //!
 //! This module handles:
 //! - Upstream server address, port, and authentication key ([`Upstream`])
-//! - Downstream interface address and port ([`DownstreamDifficultyConfig`])
+//! - Downstream interface address and port ([`TranslatorConfig::downstream_address`], [`TranslatorConfig::downstream_port`])
 //! - Supported protocol versions
 //! - Downstream difficulty adjustment parameters ([`DownstreamDifficultyConfig`])
 use std::path::{Path, PathBuf};
