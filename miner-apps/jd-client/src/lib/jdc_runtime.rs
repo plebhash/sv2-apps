@@ -192,45 +192,41 @@ impl<State> JdcRuntime<State> {
         Ok(())
     }
 
-    async fn start_services_inner(&self, io: &Io, channel_manager: ChannelManager) {
+    async fn start_services_inner(
+        &self,
+        io: &Io,
+        channel_manager: ChannelManager,
+    ) -> Result<(), JDCErrorKind> {
         // Start monitoring server if configured
         #[cfg(feature = "monitoring")]
         if let Some(monitoring_addr) = self.jd_client.config.monitoring_address() {
             info!("Initializing monitoring server on http://{monitoring_addr}");
-            if let Err(e) = self.start_monitoring_tasks(&channel_manager, monitoring_addr) {
-                error!("Failed to initialize monitoring tasks: {e}");
-                self.jd_client.cancellation_token.cancel();
-            }
+            self.start_monitoring_tasks(&channel_manager, monitoring_addr)
+                .map_err(JDCErrorKind::MonitoringServerError)?;
         }
 
-        self.task_manager.spawn({
-            let config = self.jd_client.config.clone();
-            let cancellation_token = self.jd_client.cancellation_token.clone();
-            let task_manager = self.task_manager.clone();
-            let fallback_coordinator = self.fallback_coordinator.clone();
-            let downstream_to_channel_manager_sender =
-                io.downstream_to_channel_manager_sender.clone();
-            async move {
-                if let Err(e) = channel_manager
-                    .start_downstream_server(
-                        *config.authority_public_key(),
-                        *config.authority_secret_key(),
-                        config.cert_validity_sec(),
-                        *config.listening_address(),
-                        task_manager,
-                        cancellation_token.clone(),
-                        fallback_coordinator,
-                        downstream_to_channel_manager_sender,
-                        config.supported_extensions().to_vec(),
-                        config.required_extensions().to_vec(),
-                    )
-                    .await
-                {
-                    tracing::error!(?e, "Downstream server task exited with error");
-                    cancellation_token.cancel();
-                }
-            }
-        });
+        let config = self.jd_client.config.clone();
+        let cancellation_token = self.jd_client.cancellation_token.clone();
+        let task_manager = self.task_manager.clone();
+        let fallback_coordinator = self.fallback_coordinator.clone();
+        let downstream_to_channel_manager_sender = io.downstream_to_channel_manager_sender.clone();
+        channel_manager
+            .start_downstream_server(
+                *config.authority_public_key(),
+                *config.authority_secret_key(),
+                config.cert_validity_sec(),
+                *config.listening_address(),
+                task_manager,
+                cancellation_token.clone(),
+                fallback_coordinator,
+                downstream_to_channel_manager_sender,
+                config.supported_extensions().to_vec(),
+                config.required_extensions().to_vec(),
+            )
+            .await
+            .map_err(|e| e.kind)?;
+
+        Ok(())
     }
 
     fn into_failed(self) -> JdcRuntime<Failed> {
@@ -501,11 +497,11 @@ impl JdcRuntime<TemplateProviderReady> {
         let runtime = self.bootstrap_channel_manager().await?;
 
         if runtime.jd_client.config.mode == ConfigJDCMode::SoloMining {
-            return Ok(runtime.into_solo_mining().start_services().await);
+            return Ok(runtime.into_solo_mining().start_services().await?);
         }
 
         match runtime.try_upstream().await {
-            Ok(upstream_ready) => Ok(upstream_ready.start_services().await),
+            Ok(upstream_ready) => Ok(upstream_ready.start_services().await?),
             Err((JDCErrorKind::NoUpstreamConfig(mode), runtime)) => {
                 error!(
                     ?mode,
@@ -519,7 +515,7 @@ impl JdcRuntime<TemplateProviderReady> {
                 Ok(template_provider_ready
                     .into_solo_mining()
                     .start_services()
-                    .await)
+                    .await?)
             }
         }
     }
@@ -801,11 +797,17 @@ impl JdcRuntime<ChannelManagerReady> {
 impl JdcRuntime<UpstreamReady> {
     /// Activates the background execution loops of the [`ChannelManager`], downstream server, and
     /// monitoring server, transitioning the runtime to [`Running`].
-    async fn start_services(self) -> JdcRuntime<Running> {
-        self.start_services_inner(&self.state.io, self.state.channel_manager.clone())
-            .await;
+    async fn start_services(
+        self,
+    ) -> Result<JdcRuntime<Running>, (JDCErrorKind, JdcRuntime<UpstreamReady>)> {
+        if let Err(e) = self
+            .start_services_inner(&self.state.io, self.state.channel_manager.clone())
+            .await
+        {
+            return Err((e, self));
+        }
 
-        JdcRuntime {
+        Ok(JdcRuntime {
             miner_coinbase_outputs: self.miner_coinbase_outputs,
             encoded_outputs: self.encoded_outputs,
             mode: self.mode,
@@ -815,18 +817,24 @@ impl JdcRuntime<UpstreamReady> {
             jd_client: self.jd_client,
             upstream_addresses: self.upstream_addresses,
             state: Running { io: self.state.io },
-        }
+        })
     }
 }
 
 impl JdcRuntime<SoloMiningReady> {
     /// Activates the background execution loops of the [`ChannelManager`], downstream server, and
     /// monitoring server, transitioning the runtime to [`Running`].
-    async fn start_services(self) -> JdcRuntime<Running> {
-        self.start_services_inner(&self.state.io, self.state.channel_manager.clone())
-            .await;
+    async fn start_services(
+        self,
+    ) -> Result<JdcRuntime<Running>, (JDCErrorKind, JdcRuntime<SoloMiningReady>)> {
+        if let Err(e) = self
+            .start_services_inner(&self.state.io, self.state.channel_manager.clone())
+            .await
+        {
+            return Err((e, self));
+        }
 
-        JdcRuntime {
+        Ok(JdcRuntime {
             miner_coinbase_outputs: self.miner_coinbase_outputs,
             encoded_outputs: self.encoded_outputs,
             mode: self.mode,
@@ -836,7 +844,7 @@ impl JdcRuntime<SoloMiningReady> {
             jd_client: self.jd_client,
             upstream_addresses: self.upstream_addresses,
             state: Running { io: self.state.io },
-        }
+        })
     }
 }
 

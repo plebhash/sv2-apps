@@ -46,7 +46,7 @@ impl JobDeclaratorClient {
         }
     }
 
-    pub fn mark_stopped(&self) {
+    fn mark_stopped(&self) {
         self.is_alive.store(false, Ordering::Release);
         self.cancellation_token.cancel();
         self.shutdown_notify.notify_waiters();

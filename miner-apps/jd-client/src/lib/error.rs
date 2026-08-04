@@ -278,6 +278,8 @@ pub enum JDCErrorKind {
     NoUpstreamConfig(ConfigJDCMode),
     /// Invalid coinbase output in config
     InvalidCoinbaseOutput,
+    /// Cannot initialize monitoring tasks
+    MonitoringServerError(String),
 }
 
 impl std::error::Error for JDCErrorKind {}
@@ -430,6 +432,7 @@ impl fmt::Display for JDCErrorKind {
                 "No upstreams configured for {mode:?} mode - at least one upstream is required"
             ),
             InvalidCoinbaseOutput => write!(f, "Invalid coinbase output in config"),
+            MonitoringServerError(e) => write!(f, "Failed to initialize monitoring tasks: `{e:?}`"),
         }
     }
 }
