@@ -733,18 +733,8 @@ impl ChannelManager {
         fallback_coordinator: FallbackCoordinator,
         task_manager: Arc<TaskManager>,
         coinbase_outputs: Vec<TxOut>,
-    ) {
-        if let Err(e) = self.coinbase_output_constraints(coinbase_outputs).await {
-            error!(error = ?e, "Failed to send CoinbaseOutputConstraints message to TP");
-            if let Action::Shutdown = e.action {
-                warn!(
-                    error_kind = ?e.kind,
-                    "CoinbaseOutputConstraints requested shutdown; cancelling global token"
-                );
-                cancellation_token.cancel();
-            }
-            return;
-        }
+    ) -> JDCResult<(), error::ChannelManager> {
+        self.coinbase_output_constraints(coinbase_outputs).await?;
 
         task_manager.spawn(async move {
             // we just spawned a new task that's relevant to fallback coordination
@@ -842,6 +832,8 @@ impl ChannelManager {
             // signal fallback coordinator that this task has completed its cleanup
             fallback_handler.done();
         });
+
+        Ok(())
     }
 
     // Removes a downstream entry from the Channel Manager’s state.

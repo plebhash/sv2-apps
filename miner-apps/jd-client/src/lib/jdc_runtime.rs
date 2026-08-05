@@ -544,7 +544,7 @@ impl JdcRuntime<TemplateProviderReady> {
             Err(e) => return Err((e.kind, self)),
         };
 
-        channel_manager
+        if let Err(e) = channel_manager
             .clone()
             .start(
                 self.jd_client.cancellation_token.clone(),
@@ -552,7 +552,10 @@ impl JdcRuntime<TemplateProviderReady> {
                 self.task_manager.clone(),
                 self.miner_coinbase_outputs.clone(),
             )
-            .await;
+            .await
+        {
+            return Err((e.kind, self));
+        }
 
         Ok(JdcRuntime {
             miner_coinbase_outputs: self.miner_coinbase_outputs,
