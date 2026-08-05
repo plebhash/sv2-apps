@@ -74,10 +74,10 @@ impl JobDeclaratorClient {
         let mut running = match runtime.bootstrap().await {
             Ok(running) => running,
             Err(bootstrap_err) => {
-                error!(?bootstrap_err.kind, "Failed to bootstrap JDC");
-                bootstrap_err.runtime.shutdown().await;
-                self.mark_stopped();
-                return Err(bootstrap_err.kind);
+                let (kind, runtime) = bootstrap_err.into_parts();
+                error!(?kind, "Failed to bootstrap JDC");
+                runtime.shutdown().await;
+                return Err(kind);
             }
         };
 
@@ -85,7 +85,6 @@ impl JobDeclaratorClient {
             match running.wait().await {
                 RuntimeEvent::Shutdown => {
                     running.shutdown().await;
-                    self.mark_stopped();
                     return Ok(());
                 }
                 RuntimeEvent::Fallback => {
@@ -94,10 +93,10 @@ impl JobDeclaratorClient {
                     running = match tp_ready_runtime.bootstrap_mining().await {
                         Ok(new_running) => new_running,
                         Err(bootstrap_err) => {
-                            error!(?bootstrap_err.kind, "Failed to reconnect JDC");
-                            bootstrap_err.runtime.shutdown().await;
-                            self.mark_stopped();
-                            return Err(bootstrap_err.kind);
+                            let (kind, runtime) = bootstrap_err.into_parts();
+                            error!(?kind, "Failed to reconnect JDC");
+                            runtime.shutdown().await;
+                            return Err(kind);
                         }
                     };
                 }

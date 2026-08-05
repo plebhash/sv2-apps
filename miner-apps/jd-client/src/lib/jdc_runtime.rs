@@ -107,9 +107,16 @@ pub(super) struct Running {
 
 pub(super) struct Failed;
 
+#[must_use = "bootstrap errors include a partially initialized runtime that must be shut down"]
 pub(super) struct BootstrapError {
-    pub(super) kind: JDCErrorKind,
-    pub(super) runtime: JdcRuntime<Failed>,
+    kind: JDCErrorKind,
+    runtime: JdcRuntime<Failed>,
+}
+
+impl BootstrapError {
+    pub(super) fn into_parts(self) -> (JDCErrorKind, JdcRuntime<Failed>) {
+        (self.kind, self.runtime)
+    }
 }
 
 impl<State> From<(JDCErrorKind, JdcRuntime<State>)> for BootstrapError {
@@ -258,8 +265,9 @@ impl<State> JdcRuntime<State> {
     /// Performs a coordinated, graceful shutdown of the runtime.
     ///
     /// Signals cancellation to all active sub-services and background tasks, awaiting
-    /// their clean termination up to a configured graceful timeout.
-    pub async fn shutdown(self) {
+    /// their clean termination up to a configured graceful timeout, and finally marks the
+    /// owning [`JobDeclaratorClient`] as stopped — callers do not need to do so themselves.
+    pub(super) async fn shutdown(self) {
         self.jd_client.cancellation_token.cancel();
 
         if let Some(bitcoin_core_sv2) = self.bitcoin_core_sv2 {
@@ -346,7 +354,7 @@ impl JdcRuntime<Init> {
     ///
     /// If an intermediate phase fails, the caller receives the partially initialized
     /// runtime and is responsible for shutting down any resources that were already started.
-    pub async fn bootstrap(self) -> Result<JdcRuntime<Running>, BootstrapError> {
+    pub(super) async fn bootstrap(self) -> Result<JdcRuntime<Running>, BootstrapError> {
         let runtime = self.bootstrap_io();
 
         let runtime = runtime.bootstrap_template_provider().await?;
@@ -505,7 +513,7 @@ impl JdcRuntime<IoReady> {
 }
 
 impl JdcRuntime<TemplateProviderReady> {
-    pub async fn bootstrap_mining(self) -> Result<JdcRuntime<Running>, BootstrapError> {
+    pub(super) async fn bootstrap_mining(self) -> Result<JdcRuntime<Running>, BootstrapError> {
         let runtime = self.bootstrap_channel_manager().await?;
 
         if runtime.jd_client.config.mode == ConfigJDCMode::SoloMining {
@@ -850,13 +858,13 @@ impl JdcRuntime<SoloMiningReady> {
     }
 }
 
-pub enum RuntimeEvent {
+pub(super) enum RuntimeEvent {
     Shutdown,
     Fallback,
 }
 
 impl JdcRuntime<Running> {
-    pub async fn wait(&self) -> RuntimeEvent {
+    pub(super) async fn wait(&self) -> RuntimeEvent {
         info!("Spawning status listener task...");
         let fallback_token = self.fallback_coordinator.token();
 
@@ -877,7 +885,7 @@ impl JdcRuntime<Running> {
         }
     }
 
-    pub async fn cleanup_for_fallback(self) -> JdcRuntime<TemplateProviderReady> {
+    pub(super) async fn cleanup_for_fallback(self) -> JdcRuntime<TemplateProviderReady> {
         // trigger fallback and wait for all components to finish cleanup
         self.fallback_coordinator.trigger_fallback_and_wait().await;
         info!("All components finished fallback cleanup");
