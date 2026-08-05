@@ -210,6 +210,18 @@ impl<State> JdcRuntime<State> {
         let task_manager = self.task_manager.clone();
         let fallback_coordinator = self.fallback_coordinator.clone();
         let downstream_to_channel_manager_sender = io.downstream_to_channel_manager_sender.clone();
+
+        channel_manager
+            .clone()
+            .start(
+                cancellation_token.clone(),
+                fallback_coordinator.clone(),
+                task_manager.clone(),
+                self.miner_coinbase_outputs.clone(),
+            )
+            .await
+            .map_err(|e| e.kind)?;
+
         channel_manager
             .start_downstream_server(
                 *config.authority_public_key(),
@@ -543,19 +555,6 @@ impl JdcRuntime<TemplateProviderReady> {
             Ok(cm) => cm,
             Err(e) => return Err((e.kind, self)),
         };
-
-        if let Err(e) = channel_manager
-            .clone()
-            .start(
-                self.jd_client.cancellation_token.clone(),
-                self.fallback_coordinator.clone(),
-                self.task_manager.clone(),
-                self.miner_coinbase_outputs.clone(),
-            )
-            .await
-        {
-            return Err((e.kind, self));
-        }
 
         Ok(JdcRuntime {
             miner_coinbase_outputs: self.miner_coinbase_outputs,
