@@ -423,7 +423,11 @@ pub async fn start_sv2_translator_with_user_identities(
     let downstream_difficulty_config = translator_sv2::config::DownstreamDifficultyConfig::new(
         min_individual_miner_hashrate,
         SHARES_PER_MINUTE,
-        true,
+        // ponytail: vardiff disabled — under concurrent nextest execution the benchmark
+        // above can overlap another test's hashing, skewing the difficulty seed and
+        // firing mid-test UpdateChannel/set_difficulty that break strict sniffer
+        // assertions. No test exercises vardiff deliberately; the pool owns difficulty.
+        false,
         job_keepalive_interval_secs,
     );
 
@@ -498,7 +502,11 @@ pub async fn start_sv2_translator_with_user_identity(
     let downstream_difficulty_config = translator_sv2::config::DownstreamDifficultyConfig::new(
         min_individual_miner_hashrate,
         SHARES_PER_MINUTE,
-        true,
+        // ponytail: vardiff disabled — under concurrent nextest execution the benchmark
+        // above can overlap another test's hashing, skewing the difficulty seed and
+        // firing mid-test UpdateChannel/set_difficulty that break strict sniffer
+        // assertions. No test exercises vardiff deliberately; the pool owns difficulty.
+        false,
         job_keepalive_interval_secs,
     );
 
