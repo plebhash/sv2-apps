@@ -7,10 +7,13 @@ use crate::{
 use async_channel::{Receiver, Sender};
 use once_cell::sync::Lazy;
 use std::{
-    collections::HashSet,
     convert::TryInto,
-    net::{SocketAddr, TcpListener},
+    fs, io,
+    net::{SocketAddr, TcpListener, TcpStream},
+    os::fd::AsRawFd,
+    path::Path,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use stratum_apps::{
     key_utils::{Secp256k1PublicKey, Secp256k1SecretKey},
@@ -26,26 +29,221 @@ use stratum_apps::{
     },
 };
 
-// prevents get_available_port from ever returning the same port twice
-static UNIQUE_PORTS: Lazy<Mutex<HashSet<u16>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+/// Advisory per-port lockfiles held for the process lifetime so no two concurrent
+/// test processes can claim the same port. The kernel releases flock on exit (even
+/// after `kill -9`), so stale lockfiles are harmless.
+static HELD_LOCKS: Lazy<Mutex<Vec<std::fs::File>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
+fn lockfile_for(port: u16) -> std::path::PathBuf {
+    std::env::temp_dir()
+        .join("sv2-it-ports")
+        .join(format!("{port}.lock"))
+}
+
+fn try_lock_port(port: u16) -> io::Result<std::fs::File> {
+    let path = lockfile_for(port);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)?;
+    // Non-blocking exclusive lock: EAGAIN → another process holds this port.
+    // SAFETY: fd is valid, flock is async-signal-safe on both Linux and macOS.
+    let fd = file.as_raw_fd();
+    if unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(file)
+}
+
+/// Acquires a blocking exclusive file lock, runs `f`, and releases the lock.
+///
+/// This serializes initialization of artifacts shared by concurrent nextest processes. Callers
+/// must check whether their artifact exists again inside `f`: another process may have created it
+/// while this process was waiting for the lock.
+pub fn with_exclusive_lock(lock_path: &Path, f: impl FnOnce()) {
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).unwrap_or_else(|e| {
+            panic!(
+                "failed to create lockfile directory {}: {e}",
+                parent.display()
+            )
+        });
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)
+        .unwrap_or_else(|e| panic!("failed to open lockfile {}: {e}", lock_path.display()));
+    let fd = file.as_raw_fd();
+    loop {
+        // SAFETY: `fd` remains valid for the lifetime of `file`; `flock` is available on every
+        // platform supported by the integration-test harness (Linux and macOS).
+        if unsafe { libc::flock(fd, libc::LOCK_EX) } == 0 {
+            break;
+        }
+        let e = io::Error::last_os_error();
+        if e.kind() != io::ErrorKind::Interrupted {
+            panic!("failed to lock {}: {e}", lock_path.display());
+        }
+    }
+    f();
+}
+
+/// How often readiness gates and message-wait loops re-check their condition.
+///
+/// Chosen as the knee of the cost/benefit curve: the suite performs ~600 waits, so residual dead
+/// time is roughly `600 * POLL_INTERVAL`. Dropping from the previous 1s to 50ms recovers ~9.5
+/// minutes; going further to 10ms would recover only ~9s more while raising the wakeup rate 5x.
+/// Each poll is one uncontended mutex acquisition (or one loopback connect), so 20 polls/sec is
+/// negligible. [`crate::sniffer::Sniffer::assert_message_not_present`] already polls the same
+/// structures at 100ms.
+pub const POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// Retry cadence for the *unbounded* connect loops that wait for a peer to come up.
+///
+/// Deliberately much slower than [`POLL_INTERVAL`]. Those loops have no timeout, so when a peer
+/// never appears — which several tests arrange on purpose — they spin for the whole test. Every
+/// test runs on a bare `#[tokio::test]`, i.e. a single-threaded runtime, so a 20 Hz connect loop
+/// competes with the test's own work on the one thread it has. The message-wait loops are safe at
+/// [`POLL_INTERVAL`] because they exit as soon as their message lands.
+pub const CONNECT_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Ceiling for readiness gates on spawned child processes (Bitcoin Core, sv2-tp).
+///
+/// This is never paid on the happy path — only when something is genuinely wrong — so it is set
+/// far above the observed startup time rather than tuned tightly. It stays well under nextest's
+/// `terminate-after` (120s) so the gate's own panic fires before nextest kills the test, which
+/// keeps the failure message legible.
+pub const PROCESS_READY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Budget for the best-effort wait on an in-process role's listening socket.
+///
+/// Deliberately equal to the fixed sleep this replaced, so no code path is ever slower than it was
+/// before: a healthy role unblocks in milliseconds, and one that never listens costs exactly what
+/// the old `sleep(1s)` cost. See [`wait_until_listening`] for why this cannot be an assertion.
+pub const ROLE_READY_BUDGET: Duration = Duration::from_secs(1);
+
+/// Blocks until `path` exists, polling every [`POLL_INTERVAL`].
+///
+/// Deliberately stats the path rather than connecting to it. This gates on Bitcoin Core's IPC
+/// socket, and a capnp RPC endpoint ascribes meaning to a bare connection: Core's libmultiprocess
+/// layer sets TCP_NODELAY on each accepted connection, so a probe that connects and immediately
+/// drops makes that setsockopt run against a socket that is already gone. On macOS that returns
+/// EINVAL and takes down Core's IPC listener with an "Uncaught exception in daemonized task",
+/// after which sv2-tp can never connect. Linux tolerates the same call, so this only reproduces
+/// on macOS.
+///
+/// Stat-ing is sound provided callers remove any datadir left over from an earlier test on the
+/// same port, so the socket that appears can only belong to the node just started.
+///
+/// Panics with `what` in the message if `timeout` elapses first.
+pub fn wait_for_path(path: &std::path::Path, timeout: Duration, what: &str) {
+    let start = std::time::Instant::now();
+    while !path.exists() {
+        if start.elapsed() > timeout {
+            panic!(
+                "timeout after {timeout:?} waiting for {what} (path {} never appeared)",
+                path.display()
+            );
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+    tracing::debug!(
+        target: "readiness",
+        "ready: {what} after {:?}",
+        start.elapsed()
+    );
+}
+
+/// Blocks until a TCP connection to `addr` succeeds, polling every [`POLL_INTERVAL`].
+///
+/// Used from synchronous contexts; see [`wait_for_listener_async`] for the async equivalent.
+///
+/// Panics with `what` in the message if `timeout` elapses first.
+pub fn wait_for_listener(addr: SocketAddr, timeout: Duration, what: &str) {
+    let start = std::time::Instant::now();
+    loop {
+        if TcpStream::connect_timeout(&addr, POLL_INTERVAL).is_ok() {
+            tracing::debug!(
+                target: "readiness",
+                "ready: {what} after {:?}",
+                start.elapsed()
+            );
+            return;
+        }
+        if start.elapsed() > timeout {
+            panic!("timeout after {timeout:?} waiting for {what} to listen on {addr}");
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// Waits up to `budget` for a TCP connection to `addr` to succeed, polling every
+/// [`POLL_INTERVAL`]. Returns whether the listener came up.
+///
+/// Unlike the process gates above this deliberately does **not** assert, because a role's
+/// listening socket is not a universally valid readiness signal. `PoolRuntime::bootstrap` runs
+/// `bootstrap_template_provider()` before `start_services()`, so the pool only starts listening
+/// once its template-distribution handshake completes — and tests that intercept that handshake
+/// prevent it from ever listening, by design. Giving up quietly keeps those tests behaving as they
+/// did while still letting healthy roles unblock in milliseconds.
+pub async fn wait_until_listening(addr: SocketAddr, budget: Duration, what: &str) -> bool {
+    let start = std::time::Instant::now();
+    loop {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            tracing::debug!(
+                target: "readiness",
+                "ready: {what} after {:?}",
+                start.elapsed()
+            );
+            return true;
+        }
+        if start.elapsed() > budget {
+            tracing::debug!(
+                target: "readiness",
+                "{what} not listening on {addr} within {budget:?}, continuing anyway"
+            );
+            return false;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+/// Allocate a loopback address whose port is exclusively reserved across
+/// concurrent test processes.
+///
+/// Probes with `bind(0)` then holds a per-port `flock` lockfile in
+/// `$TMPDIR/sv2-it-ports/` for the process lifetime. Every integration-test process follows this
+/// protocol, so another test cannot claim the port after the probe is dropped and before its role
+/// binds. Lockfiles are released by the kernel on exit.
 pub fn get_available_address() -> SocketAddr {
-    let port = get_available_port();
-    SocketAddr::from(([127, 0, 0, 1], port))
+    SocketAddr::from(([127, 0, 0, 1], get_available_port()))
 }
 
 fn get_available_port() -> u16 {
-    let mut unique_ports = UNIQUE_PORTS.lock().unwrap();
-
     loop {
-        let port = TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        if !unique_ports.contains(&port) {
-            unique_ports.insert(port);
-            return port;
+        let probe = TcpListener::bind("127.0.0.1:0").expect("bind(0) for port probe");
+        let port = probe.local_addr().expect("probe local_addr").port();
+        match try_lock_port(port) {
+            Ok(lock_handle) => {
+                HELD_LOCKS.lock().expect("ports lock").push(lock_handle);
+                drop(probe);
+                return port;
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                drop(probe);
+            }
+            Err(e) => {
+                drop(probe);
+                panic!("failed to lock port {port}: {e}");
+            }
         }
     }
 }
@@ -429,8 +627,9 @@ pub mod tarball {
     pub fn unpack(tarball_bytes: &[u8], destination: &Path) {
         use std::{io::Write as IoWrite, process::Command};
 
-        // Write tarball bytes to a temp file
-        let temp_tarball = destination.join("temp.tar.gz");
+        // Use pid-unique temp name so concurrent test processes can't share it.
+        let pid = std::process::id();
+        let temp_tarball = destination.join(format!("temp-{pid}.tar.gz"));
         let mut temp_file = File::create(&temp_tarball).unwrap();
         temp_file.write_all(tarball_bytes).unwrap();
         drop(temp_file);

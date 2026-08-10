@@ -1,7 +1,7 @@
 use stratum_apps::stratum_core::parsers_sv2::{AnyMessageOwned, JobDeclarationOwned, MiningOwned};
 // This file contains integration tests for the `JDC/S` module.
 use integration_tests_sv2::{
-    interceptor::{MessageDirection, ReplaceMessage},
+    interceptor::{IgnoreMessage, MessageDirection, ReplaceMessage},
     mock_roles::{MockDownstream, WithSetup},
     start_jdc_with_user_identities,
     template_provider::DifficultyLevel,
@@ -753,7 +753,17 @@ async fn jdc_group_extended_channels() {
         None,
     );
 
-    let (sniffer, sniffer_addr) = start_sniffer("sniffer", jdc_addr, false, vec![], None);
+    // JDC downstream vardiff may inject SetTarget if the test runs past its 60s tick on
+    // loaded CI runners (zero shares on these channels); no assertion depends on it.
+    let ignore_set_target =
+        IgnoreMessage::new(MessageDirection::ToDownstream, MESSAGE_TYPE_SET_TARGET);
+    let (sniffer, sniffer_addr) = start_sniffer(
+        "sniffer",
+        jdc_addr,
+        false,
+        vec![ignore_set_target.into()],
+        None,
+    );
 
     let mock_downstream = MockDownstream::new(
         sniffer_addr,
@@ -941,7 +951,17 @@ async fn jdc_group_standard_channels() {
         None,
     );
 
-    let (sniffer, sniffer_addr) = start_sniffer("sniffer", jdc_addr, false, vec![], None);
+    // JDC downstream vardiff may inject SetTarget if the test runs past its 60s tick on
+    // loaded CI runners (zero shares on these channels); no assertion depends on it.
+    let ignore_set_target =
+        IgnoreMessage::new(MessageDirection::ToDownstream, MESSAGE_TYPE_SET_TARGET);
+    let (sniffer, sniffer_addr) = start_sniffer(
+        "sniffer",
+        jdc_addr,
+        false,
+        vec![ignore_set_target.into()],
+        None,
+    );
 
     let mock_downstream = MockDownstream::new(
         sniffer_addr,

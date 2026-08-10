@@ -5,7 +5,7 @@ use stratum_apps::stratum_core::parsers_sv2::{
 //
 // `PoolSv2` is a module that implements the Pool role in the Stratum V2 protocol.
 use integration_tests_sv2::{
-    interceptor::{MessageDirection, ReplaceMessage},
+    interceptor::{IgnoreMessage, MessageDirection, ReplaceMessage},
     mock_roles::{MockDownstream, WithSetup},
     template_provider::DifficultyLevel,
     *,
@@ -118,6 +118,14 @@ async fn header_timestamp_value_assertion_in_new_extended_mining_job() {
             integration_tests_sv2::interceptor::IgnoreMessage::new(
                 integration_tests_sv2::interceptor::MessageDirection::ToUpstream,
                 MESSAGE_TYPE_SUBMIT_SHARES_EXTENDED,
+            )
+            .into(),
+            // Pool vardiff may inject SetTarget on loaded CI runners (zero shares are
+            // blocked above, so the first vardiff tick would fire); no assertion
+            // depends on it.
+            integration_tests_sv2::interceptor::IgnoreMessage::new(
+                integration_tests_sv2::interceptor::MessageDirection::ToDownstream,
+                MESSAGE_TYPE_SET_TARGET,
             )
             .into(),
         ],
@@ -539,7 +547,17 @@ async fn pool_group_extended_channels() {
     tp.fund_wallet().unwrap();
     let (pool, pool_addr, _) = start_pool(sv2_tp_config(tp_addr), vec![], vec![], false).await;
 
-    let (sniffer, sniffer_addr) = start_sniffer("sniffer", pool_addr, false, vec![], None);
+    // Pool vardiff may inject SetTarget if the test runs past its 60s tick on loaded
+    // CI runners (zero shares on these channels); no assertion depends on it.
+    let ignore_set_target =
+        IgnoreMessage::new(MessageDirection::ToDownstream, MESSAGE_TYPE_SET_TARGET);
+    let (sniffer, sniffer_addr) = start_sniffer(
+        "sniffer",
+        pool_addr,
+        false,
+        vec![ignore_set_target.into()],
+        None,
+    );
 
     let mock_downstream = MockDownstream::new(
         sniffer_addr,
@@ -710,7 +728,17 @@ async fn pool_group_standard_channels() {
     tp.fund_wallet().unwrap();
     let (pool, pool_addr, _) = start_pool(sv2_tp_config(tp_addr), vec![], vec![], false).await;
 
-    let (sniffer, sniffer_addr) = start_sniffer("sniffer", pool_addr, false, vec![], None);
+    // Pool vardiff may inject SetTarget if the test runs past its 60s tick on loaded
+    // CI runners (zero shares on these channels); no assertion depends on it.
+    let ignore_set_target =
+        IgnoreMessage::new(MessageDirection::ToDownstream, MESSAGE_TYPE_SET_TARGET);
+    let (sniffer, sniffer_addr) = start_sniffer(
+        "sniffer",
+        pool_addr,
+        false,
+        vec![ignore_set_target.into()],
+        None,
+    );
 
     let mock_downstream = MockDownstream::new(
         sniffer_addr,
@@ -894,7 +922,17 @@ async fn pool_require_standard_jobs_set_does_not_group_standard_channels() {
     tp.fund_wallet().unwrap();
     let (pool, pool_addr, _) = start_pool(sv2_tp_config(tp_addr), vec![], vec![], false).await;
 
-    let (sniffer, sniffer_addr) = start_sniffer("sniffer", pool_addr, false, vec![], None);
+    // Pool vardiff may inject SetTarget if the test runs past its 60s tick on loaded
+    // CI runners (zero shares on these channels); no assertion depends on it.
+    let ignore_set_target =
+        IgnoreMessage::new(MessageDirection::ToDownstream, MESSAGE_TYPE_SET_TARGET);
+    let (sniffer, sniffer_addr) = start_sniffer(
+        "sniffer",
+        pool_addr,
+        false,
+        vec![ignore_set_target.into()],
+        None,
+    );
 
     // Use REQUIRES_STANDARD_JOBS flag (0b0001) to prevent channel grouping
     let mock_downstream = MockDownstream::new(
