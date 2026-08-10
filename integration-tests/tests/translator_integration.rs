@@ -757,11 +757,17 @@ async fn aggregated_translator_correctly_deals_with_group_channels() {
         MessageDirection::ToDownstream,
         MESSAGE_TYPE_SUBMIT_SHARES_SUCCESS,
     );
+    // Pool vardiff may inject SetTarget on loaded CI runners; no assertion depends on it.
+    let ignore_set_target =
+        IgnoreMessage::new(MessageDirection::ToDownstream, MESSAGE_TYPE_SET_TARGET);
     let (sniffer, sniffer_addr) = start_sniffer(
         "0",
         pool_addr,
         false,
-        vec![ignore_submit_shares_success.into()],
+        vec![
+            ignore_submit_shares_success.into(),
+            ignore_set_target.into(),
+        ],
         None,
     );
 
@@ -1016,11 +1022,17 @@ async fn non_aggregated_translator_correctly_deals_with_group_channels() {
         MessageDirection::ToDownstream,
         MESSAGE_TYPE_SUBMIT_SHARES_SUCCESS,
     );
+    // Pool vardiff may inject SetTarget on loaded CI runners; no assertion depends on it.
+    let ignore_set_target =
+        IgnoreMessage::new(MessageDirection::ToDownstream, MESSAGE_TYPE_SET_TARGET);
     let (sniffer, sniffer_addr) = start_sniffer(
         "0",
         pool_addr,
         false,
-        vec![ignore_submit_shares_success.into()],
+        vec![
+            ignore_submit_shares_success.into(),
+            ignore_set_target.into(),
+        ],
         None,
     );
     let (translator, tproxy_addr, _) =
